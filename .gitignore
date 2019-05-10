@@ -1,0 +1,5 @@
+src/*.so
+src/cysqlite.c
+*.so
+z.py
+build/
