@@ -191,7 +191,7 @@ cdef class Statement(object):
                                          <sqlite3_destructor_type>-1)
 
             if rc != SQLITE_OK:
-                raise Exception('error binding parameter "r"' % param)
+                raise Exception('error binding parameter "%r"' % param)
 
         rc = sqlite3_step(self.st)
         return self._get_next_row()
