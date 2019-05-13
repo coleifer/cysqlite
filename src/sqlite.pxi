@@ -56,7 +56,7 @@ cdef extern from "sqlite3.h" nogil:
     cdef int sqlite3_bind_double(sqlite3_stmt *, int, double)
     cdef int sqlite3_bind_int64(sqlite3_stmt *, int, sqlite3_int64)
     cdef int sqlite3_bind_null(sqlite3_stmt *, int)
-    cdef int sqlite3_bind_test64(sqlite3_stmt *, int, const char *,
+    cdef int sqlite3_bind_text64(sqlite3_stmt *, int, const char *,
                                  sqlite3_uint64, void(*)(void *),
                                  unsigned char encoding)
     cdef int sqlite3_bind_value(sqlite3_stmt *, int, const sqlite3_value *)

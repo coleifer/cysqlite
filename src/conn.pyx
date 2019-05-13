@@ -1,5 +1,6 @@
 # cython: language_level=3
 from cpython.bytes cimport PyBytes_AsString
+from cpython.bytes cimport PyBytes_AsStringAndSize
 from cpython.bytes cimport PyBytes_Check
 from cpython.bytes cimport PyBytes_FromStringAndSize
 from cpython.object cimport PyObject
@@ -141,3 +142,92 @@ cdef class Connection(object):
             raise Exception(error)
 
         return rc
+
+
+cdef class Statement(object):
+    cdef:
+        sqlite3_stmt *st
+        Connection conn
+        bytes sql
+        object next_row
+        tuple params
+
+    def __init__(self, Connection conn, sql, params=None):
+        self.conn = conn
+        self.sql = encode(sql)
+        self.params = params or ()
+
+    def execute(self):
+        cdef:
+            bytes tmp
+            char *buf
+            char *zsql
+            const char *tail
+            int i, rc
+            Py_ssize_t nbytes
+
+        PyBytes_AsStringAndSize(self.sql, &zsql, &nbytes)
+        rc = sqlite3_prepare_v2(self.conn.db, zsql, <int>nbytes, &(self.st),
+                                &tail)
+        if rc != SQLITE_OK:
+            raise Exception('error compiling statement')
+
+        for i, param in enumerate(self.params):
+            if param is None:
+                rc = sqlite3_bind_null(self.st, i)
+            elif isinstance(param, int):
+                rc = sqlite3_bind_int64(self.st, i, param)
+            elif isinstance(param, float):
+                rc = sqlite3_bind_double(self.st, i, param)
+            elif isinstance(param, unicode):
+                tmp = PyUnicode_AsUTF8String(param)
+                PyBytes_AsStringAndSize(tmp, &buf, &nbytes)
+                rc = sqlite3_bind_text64(self.st, i, buf, <int>nbytes,
+                                         <sqlite3_destructor_type>-1,
+                                         SQLITE_UTF8)
+            elif isinstance(param, bytes):
+                PyBytes_AsStringAndSize(<bytes>param, &buf, &nbytes)
+                rc = sqlite3_bind_blob64(self.st, i, <void *>buf, <int>nbytes,
+                                         <sqlite3_destructor_type>-1)
+
+            if rc != SQLITE_OK:
+                raise Exception('error binding parameter "r"' % param)
+
+        rc = sqlite3_step(self.st)
+        return self._get_next_row()
+        # rc = SQLITE_ROW? SQLITE_DONE?
+        if rc != SQLITE_OK:
+            raise Exception('error on first call to sqlite3_step: %s' % rc)
+
+    cdef _get_next_row(self):
+        cdef:
+            int i, ncols = sqlite3_data_count(self.st)
+            tuple result = PyTuple_New(ncols)
+
+        for i in range(ncols):
+            coltype = sqlite3_column_type(self.st, i)
+            if coltype == SQLITE_NULL:
+                value = None
+            elif coltype == SQLITE_INTEGER:
+                value = sqlite3_column_int64(self.st, i)
+            elif coltype == SQLITE_FLOAT:
+                value = sqlite3_column_double(self.st, i)
+            elif coltype == SQLITE_TEXT:
+                nbytes = sqlite3_column_bytes(self.st, i)
+                value = PyUnicode_DecodeUTF8(
+                    <char *>sqlite3_column_text(self.st, i),
+                    nbytes,
+                    "replace")
+                Py_INCREF(value)
+            elif coltype == SQLITE_BLOB:
+                nbytes = sqlite3_column_bytes(self.st, i)
+                value = PyBytes_FromStringAndSize(
+                    <char *>sqlite3_column_blob(self.st, i),
+                    nbytes)
+                Py_INCREF(value)
+            else:
+                assert False, 'should not get here!'
+
+            PyTuple_SET_ITEM(result, i, value)
+
+        return result
