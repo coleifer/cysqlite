@@ -9,16 +9,19 @@ conn.execute('create table if not exists "kv" ('
              '"key" text not null, '
              '"value" text not null)')
 
-st = Statement(conn, 'insert into kv (key, value) values (?,?),(?,?),(?,?)',
-               ('k1', 'v1x', 'k2', 'v2yy', 'k3', 'v3'))
-print(st.execute())
+st = conn.execute_statement(
+    'insert into kv (key, value) values (?,?),(?,?),(?,?)',
+    ('k1', 'v1x', 'k2', 'v2yy', 'k3', 'v3'))
+print(list(st))
+print(st.changes())
+print(st.last_insert_rowid())
 
 def cb(row):
     print(row)
 
 conn.execute('select * from kv', cb)
 
-st = Statement(conn, "select * from kv")
-print(st.execute())
+st = conn.execute_statement('select * from kv;')
+print(list(st))
 
 conn.close()

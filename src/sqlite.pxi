@@ -72,6 +72,7 @@ cdef extern from "sqlite3.h" nogil:
     cdef const char *sqlite3_column_origin_name(sqlite3_stmt*, int N)
     cdef const char *sqlite3_column_decltype(sqlite3_stmt*, int)
     cdef int sqlite3_step(sqlite3_stmt*)
+    cdef int sqlite3_reset(sqlite3_stmt*)
     cdef int sqlite3_data_count(sqlite3_stmt *pStmt)
     cdef int sqlite3_finalize(sqlite3_stmt *pStmt)
 

@@ -136,49 +136,87 @@ cdef class Connection(object):
                 Py_DECREF(callback)
 
         if rc != SQLITE_OK:
-            error = 'error executing query: %s' % rc
-            if errmsg:
-                error = '%s - %s' % (error, errmsg)
-            raise Exception(error)
+            raise_sqlite_error(self.db)
 
         return rc
 
+    def execute_statement(self, sql, params=None):
+        st = _Statement(self, sql)
+        return st.execute(params or ())
 
-cdef class Statement(object):
+
+cdef raise_sqlite_error(sqlite3 *db):
+    errmsg = sqlite3_errmsg(db)
+    raise SqliteError(decode(errmsg))
+
+
+
+class SqliteError(Exception): pass
+class InternalError(SqliteError): pass
+
+
+cdef class _Statement(object):
     cdef:
-        sqlite3_stmt *st
         Connection conn
+        sqlite3_stmt *st
         bytes sql
-        object next_row
-        tuple params
+        int step_status
+        object row_data
 
-    def __init__(self, Connection conn, sql, params=None):
+    def __init__(self, Connection conn, sql):
         self.conn = conn
         self.sql = encode(sql)
-        self.params = params or ()
+        self.st = NULL
 
-    def execute(self):
+        self.step_status = 0
+        self.row_data = None
+
+    def __dealloc__(self):
+        sqlite3_finalize(self.st)
+
+    cdef compile_sql(self):
+        if self.st != NULL:
+            raise InternalError('statement is in-use!')
+
         cdef:
-            bytes tmp
-            char *buf
             char *zsql
-            const char *tail
-            int i, rc
+            int rc
             Py_ssize_t nbytes
 
         PyBytes_AsStringAndSize(self.sql, &zsql, &nbytes)
         with nogil:
             rc = sqlite3_prepare_v2(self.conn.db, zsql, <int>nbytes,
-                                    &(self.st), &tail)
+                                    &(self.st), NULL)
 
-        if rc != SQLITE_OK:
-            raise Exception('error compiling statement')
+        if rc == SQLITE_OK:
+            return
+
+        self.st = NULL
+        raise_sqlite_error(self.conn.db)
+
+    cdef int reset(self):
+        if self.st == NULL:
+            return 0
+        return sqlite3_reset(self.st)
+
+    cdef int finalize(self):
+        cdef int rc
+        rc = sqlite3_finalize(self.st)
+        self.st = NULL
+        return rc
+
+    cdef bind_statement_parameters(self, tuple params):
+        cdef:
+            bytes tmp
+            char *buf
+            int i, rc
+            Py_ssize_t nbytes
 
         pc = sqlite3_bind_parameter_count(self.st)
-        if pc != len(self.params):
-            raise Exception('error %s parameters required' % pc)
+        if pc != len(params):
+            raise SqliteError('error %s parameters required' % pc)
 
-        for i, param in enumerate(self.params):
+        for i, param in enumerate(params):
             if param is None:
                 rc = sqlite3_bind_null(self.st, i + 1)
             elif isinstance(param, int):
@@ -198,18 +236,54 @@ cdef class Statement(object):
                                          <sqlite3_destructor_type>-1)
 
             if rc != SQLITE_OK:
-                raise Exception('error binding parameter "%r" - %s' %
-                                (param, rc))
+                raise_sqlite_error(self.conn.db)
 
-        with nogil:
-            rc = sqlite3_step(self.st)
+    def execute(self, tuple params):
+        self.compile_sql()
+        self.bind_statement_parameters(params)
+        cdef int rc = sqlite3_step(self.st)
+        if rc == SQLITE_DONE or rc == SQLITE_ROW:
+            return StatementIterator(self, rc)
+        else:
+            raise_sqlite_error(self.conn.db)
 
-        return self._get_next_row()
-        # rc = SQLITE_ROW? SQLITE_DONE?
-        if rc != SQLITE_OK:
-            raise Exception('error on first call to sqlite3_step: %s' % rc)
 
-    cdef _get_next_row(self):
+cdef class StatementIterator(object):
+    cdef:
+        int last_status
+        _Statement statement
+        sqlite3 *db
+        sqlite3_stmt *st
+
+    def __init__(self, _Statement statement, int last_status):
+        self.statement = statement
+        self.db = statement.conn.db
+        self.st = statement.st
+        self.last_status = last_status
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        row = None
+        if self.last_status == SQLITE_ROW:
+            row = self._get_row()
+            self.last_status = sqlite3_step(self.st)
+        elif self.last_status == SQLITE_DONE:
+            self.statement.reset()
+            raise StopIteration
+        else:
+            raise_sqlite_error(self.db)
+
+        return row
+
+    def changes(self):
+        return sqlite3_changes(self.db)
+
+    def last_insert_rowid(self):
+        return sqlite3_last_insert_rowid(self.db)
+
+    cdef _get_row(self):
         cdef:
             int i, ncols = sqlite3_data_count(self.st)
             tuple result = PyTuple_New(ncols)
