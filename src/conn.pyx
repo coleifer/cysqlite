@@ -50,7 +50,7 @@ cdef int _exec_callback(void *data, int argc, char **argv, char **colnames) with
         int i
         object callback = <object>data  # Re-cast userdata callback.
 
-    if not hasattr(callback, 'rowtype'):
+    if not getattr(callback, 'rowtype', None):
         cols = []
         for i in range(argc):
             bcol = <bytes>(colnames[i])
@@ -127,6 +127,7 @@ cdef class Connection(object):
 
         if callback is not None:
             Py_INCREF(callback)
+            callback.rowtype = None
             userdata = <void *>callback
 
         try:
