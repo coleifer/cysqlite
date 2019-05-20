@@ -67,6 +67,10 @@ cdef class Connection(object):
         if not self.db:
             return False
 
+        # When the statements are deallocated, they will be finalized.
+        self.stmt_available = {}
+        self.stmt_in_use = {}
+
         cdef int rc = sqlite3_close_v2(self.db)
         if rc != SQLITE_OK:
             raise Exception('error closing database: %s' % rc)
