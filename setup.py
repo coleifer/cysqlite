@@ -13,9 +13,11 @@ else:
 
 
 if cython_installed:
-    python_sources = glob.glob('src/*.pyx')
+    #python_sources = glob.glob('src/*.pyx')
+    python_sources = ['src/cysqlite.pyx']
 else:
-    python_sources = glob.glob('src/*.c')
+    #python_sources = glob.glob('src/*.c')
+    python_sources = ['src/cysqlite.c']
     cythonize = lambda obj: obj
 
 cysqlite_extension = Extension('cysqlite', libraries=['sqlite3'],
