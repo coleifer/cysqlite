@@ -47,6 +47,8 @@ cdef class Connection(object):
         # List of transactions / savepoints?
         # List of blob handles?
         # List of backup handles?
+        dict stmt_available  # sql -> Statement.
+        dict stmt_in_use  # id(stmt) -> Statement.
 
     def __init__(self, database, flags=None, timeout=5000, vfs=None):
         self.database = database
@@ -54,6 +56,8 @@ cdef class Connection(object):
         self.timeout = timeout
         self.vfs = vfs
         self.db = NULL
+        self.stmt_available = {}
+        self.stmt_in_use = {}
 
     def __dealloc__(self):
         if self.db:
@@ -97,9 +101,26 @@ cdef class Connection(object):
 
     cdef Statement prepare(self, sql, params=None):
         # TODO: load from cache.
-        cdef Statement st = Statement(self, sql)
+        #cdef Statement st = Statement(self, sql)
+        cdef Statement st = self.stmt_get(sql)
         st.bind(params)
         return st
+
+    cdef Statement stmt_get(self, sql):
+        cdef Statement st
+
+        if sql in self.stmt_available:
+            st = self.stmt_available.pop(sql)
+        else:
+            st = Statement(self, sql)
+
+        self.stmt_in_use[id(st)] = st
+        return st
+
+    cdef stmt_release(self, Statement st):
+        if id(st) in self.stmt_in_use:
+            del self.stmt_in_use[id(st)]
+        self.stmt_available[st.sql] = st
 
     def execute(self, sql, params=None):
         st = self.prepare(sql, params or ())
@@ -234,6 +255,7 @@ cdef class Statement(object):
         if self.st == NULL:
             return 0
         self.step_status = -1
+        self.conn.stmt_release(self)
         return sqlite3_reset(self.st)
 
     def __iter__(self):
