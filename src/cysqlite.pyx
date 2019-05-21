@@ -26,8 +26,8 @@ class SqliteError(Exception):
 
 # Forward references.
 cdef class Statement(object)
-#cdef class Transaction(object)
-#cdef class Savepoint(object)
+cdef class Transaction(object)
+cdef class Savepoint(object)
 #cdef class Blob(object)
 #cdef class Backup(object)
 
