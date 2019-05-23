@@ -74,3 +74,58 @@ with conn.atomic():
     list(conn.execute('select * from foo'))
 
 conn.close()
+
+print('-' * 70)
+
+# Test blob I/O.
+conn.connect()
+conn.execute('create table register (id integer not null primary key, '
+             'data blob not null)')
+def make_blob(n):
+    conn.execute('insert into register (data) values (zeroblob(?))', (n,))
+    return conn.last_insert_rowid()
+
+r1024 = make_blob(1024)
+r16 = make_blob(16)
+b = Blob(conn, 'register', 'data', r1024)
+print('1024? len = ', len(b))
+b.write(b'x' * 1022)
+b.write(b'zz')
+b.seek(1020)
+data = b.read(3)
+print('xxz? data = ', data)
+assert b.read() == b'z'
+assert b.read() == b''
+b.seek(-10, 2)
+assert b.tell() == 1014
+assert b.read() == b'xxxxxxxxzz'
+
+b.reopen(r16)
+assert b.tell() == 0
+assert len(b) == 16
+b.write(b'x' * 15)
+assert b.tell() == 15
+b.close()
+
+for row in conn.execute('select * from register'):
+    print(row)
+
+conn.close()
+
+print('-' * 70)
+
+conn = Connection(':memory:')
+conn.connect()
+conn.execute('create table kv (key text, value text)')
+conn.execute('insert into kv (key, value) values (?, ?), (?, ?), (?, ?)',
+             ('k1', 'v1', 'k2', 'v2x', 'k3', 'v3-y'))
+
+def my_func(s):
+    if s is None:
+        return
+    return s[::-1].title()
+
+conn.create_function(my_func)
+for row in conn.execute('select key, my_func(key), my_func(value) from kv'):
+    print(row)
+conn.close()
