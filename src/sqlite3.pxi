@@ -454,9 +454,26 @@ cdef extern from "sqlite3.h" nogil:
     cdef int sqlite3_column_type(sqlite3_stmt*, int iCol)
     cdef int sqlite3_finalize(sqlite3_stmt *pStmt)
     cdef int sqlite3_reset(sqlite3_stmt *pStmt)
-    cdef int sqlite3_create_function(sqlite3 *db, const char *zFunctionName, int nArg, int eTextRep, void *pApp, void (*xFunc)(sqlite3_context*,int,sqlite3_value**), void (*xStep)(sqlite3_context*,int,sqlite3_value**), void (*xFinal)(sqlite3_context*))
+    cdef int sqlite3_create_function(
+        sqlite3 *db,
+        const char *zFunctionName,
+        int nArg,
+        int eTextRep,
+        void *pApp,
+        void (*xFunc)(sqlite3_context*,int,sqlite3_value**),
+        void (*xStep)(sqlite3_context*,int,sqlite3_value**),
+        void (*xFinal)(sqlite3_context*))
     #cdef int sqlite3_create_function16(sqlite3 *db, const void *zFunctionName, int nArg, int eTextRep, void *pApp, void (*xFunc)(sqlite3_context*,int,sqlite3_value**), void (*xStep)(sqlite3_context*,int,sqlite3_value**), void (*xFinal)(sqlite3_context*))
-    cdef int sqlite3_create_function_v2(sqlite3 *db, const char *zFunctionName, int nArg, int eTextRep, void *pApp, void (*xFunc)(sqlite3_context*,int,sqlite3_value**), void (*xStep)(sqlite3_context*,int,sqlite3_value**), void (*xFinal)(sqlite3_context*), void(*xDestroy)(void*))
+    cdef int sqlite3_create_function_v2(
+        sqlite3 *db,
+        const char *zFunctionName,
+        int nArg,
+        int eTextRep,
+        void *pApp,
+        void (*xFunc)(sqlite3_context*,int,sqlite3_value**),
+        void (*xStep)(sqlite3_context*,int,sqlite3_value**),
+        void (*xFinal)(sqlite3_context*),
+        void(*xDestroy)(void*))
     cdef int sqlite3_create_window_function(sqlite3 *db, const char *zFunctionName, int nArg, int eTextRep, void *pApp, void (*xStep)(sqlite3_context*,int,sqlite3_value**), void (*xFinal)(sqlite3_context*), void (*xValue)(sqlite3_context*), void (*xInverse)(sqlite3_context*,int,sqlite3_value**), void(*xDestroy)(void*))
     cdef const void *sqlite3_value_blob(sqlite3_value*)
     cdef double sqlite3_value_double(sqlite3_value*)

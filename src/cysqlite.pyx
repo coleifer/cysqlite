@@ -1,4 +1,5 @@
 # cython: language_level=3
+from cpython.bytes cimport PyBytes_AS_STRING
 from cpython.bytes cimport PyBytes_AsString
 from cpython.bytes cimport PyBytes_AsStringAndSize
 from cpython.bytes cimport PyBytes_FromStringAndSize
@@ -28,8 +29,7 @@ class SqliteError(Exception):
 cdef class Statement(object)
 cdef class Transaction(object)
 cdef class Savepoint(object)
-#cdef class Blob(object)
-#cdef class Backup(object)
+cdef class Blob(object)
 
 
 cdef raise_sqlite_error(sqlite3 *db, unicode msg):
@@ -54,10 +54,8 @@ cdef class Connection(_callable_context_manager):
         public int timeout
         public str database
         public str vfs
-        # List of statements?
-        # List of transactions / savepoints?
-        # List of blob handles?
-        # List of backup handles?
+        # List of statements, transactions, savepoints, blob handles?
+        dict functions
         dict stmt_available  # sql -> Statement.
         dict stmt_in_use  # id(stmt) -> Statement.
         int _transaction_depth
@@ -70,6 +68,8 @@ cdef class Connection(_callable_context_manager):
         self.vfs = vfs
         self.cached_statements = cached_statements
         self.db = NULL
+
+        self.functions = {}
         self.stmt_available = {}
         self.stmt_in_use = {}
         self._transaction_depth = 0
@@ -81,6 +81,9 @@ cdef class Connection(_callable_context_manager):
     def close(self):
         if not self.db:
             return False
+
+        # Drop references to user-defined functions.
+        self.functions = {}
 
         # When the statements are deallocated, they will be finalized.
         self.stmt_available = {}
@@ -262,6 +265,58 @@ cdef class Connection(_callable_context_manager):
         cdef Connection dest = Connection(filename)
         self.backup(dest, pages, name, progress, src_name)
         dest.close()
+
+    def create_function(self, fn, name=None, nargs=-1, deterministic=True):
+        cdef:
+            _Callback callback
+            bytes bname = encode(name or fn.__name__)
+            int flags = SQLITE_UTF8
+            int rc
+
+        # Store reference to user-defined function.
+        callback = _Callback.__new__(_Callback, self, fn)
+        self.functions[name] = callback
+
+        if deterministic:
+            flags |= SQLITE_DETERMINISTIC
+
+        rc = sqlite3_create_function(
+            self.db,
+            bname,
+            <int>nargs,
+            flags,
+            <void *>callback,
+            _function_cb,
+            NULL,
+            NULL)
+        if rc != SQLITE_OK:
+            raise_sqlite_error(self.db, 'error creating function: ')
+
+
+cdef void _function_cb(sqlite3_context *ctx, int argc, sqlite3_value **argv) with gil:
+    cdef:
+        _Callback cb = <_Callback>sqlite3_user_data(ctx)
+        int i
+        tuple params
+
+    params = sqlite_to_python(argc, argv)
+    try:
+        result = cb.fn(*params)
+    except Exception as exc:
+        traceback.print_exc()
+        sqlite3_result_error(ctx, b'error in user-defined function', -1)
+    else:
+        python_to_sqlite(ctx, result)
+
+
+cdef class _Callback(object):
+    cdef:
+        Connection conn
+        object fn
+
+    def __cinit__(self, Connection conn, fn):
+        self.conn = conn
+        self.fn = fn
 
 
 cdef int _exec_callback(void *data, int argc, char **argv, char **colnames) with gil:
@@ -533,6 +588,145 @@ cdef class Statement(object):
         return result
 
 
+cdef inline int _check_blob_closed(Blob blob) except -1:
+    if not blob.blob:
+        raise SqliteError('Cannot operate on closed blob.')
+    return 0
+
+
+cdef class Blob(object):
+    cdef:
+        int offset
+        Connection conn
+        sqlite3_blob *blob
+
+    def __init__(self, Connection conn, table, column, rowid,
+                 read_only=False):
+        cdef:
+            bytes btable = encode(table)
+            bytes bcolumn = encode(column)
+            int flags = 0 if read_only else 1
+            int rc
+            sqlite3_blob *blob
+
+        if conn.db == NULL:
+            raise SqliteError('cannot operate on closed database.')
+
+        self.conn = conn
+
+        rc = sqlite3_blob_open(
+            self.conn.db,
+            b'main',
+            <const char *>btable,
+            <const char *>bcolumn,
+            <sqlite3_int64>rowid,
+            flags,
+            &blob)
+
+        if rc != SQLITE_OK:
+            raise SqliteError('Unable to open blob "%s"."%s" row %s.' %
+                              table, column, rowid)
+        if blob == NULL:
+            raise MemoryError('Unable to allocate blob.')
+
+        self.blob = blob
+        self.offset = 0
+
+    cdef _close(self):
+        if self.blob:
+            sqlite3_blob_close(self.blob)
+            self.blob = NULL
+
+    def __dealloc__(self):
+        self._close()
+
+    def __len__(self):
+        _check_blob_closed(self)
+        return sqlite3_blob_bytes(self.blob)
+
+    def read(self, n=None):
+        cdef:
+            bytes pybuf
+            int length = -1
+            int size
+            char *buf
+
+        if n is not None:
+            length = n
+
+        _check_blob_closed(self)
+        size = sqlite3_blob_bytes(self.blob)
+        if self.offset == size or length == 0:
+            return b''
+
+        if length < 0:
+            length = size - self.offset
+
+        if self.offset + length > size:
+            length = size - self.offset
+
+        pybuf = PyBytes_FromStringAndSize(NULL, length)
+        buf = PyBytes_AS_STRING(pybuf)
+        if sqlite3_blob_read(self.blob, buf, length, self.offset):
+            self._close()
+            raise_sqlite_error(self.conn.db, 'error reading from blob: ')
+
+        self.offset += length
+        return pybuf
+
+    def seek(self, offset, frame_of_reference=0):
+        cdef int size
+        _check_blob_closed(self)
+        size = sqlite3_blob_bytes(self.blob)
+        if frame_of_reference == 0:
+            if offset < 0 or offset > size:
+                raise ValueError('seek() offset outside of valid range.')
+            self.offset = offset
+        elif frame_of_reference == 1:
+            if self.offset + offset < 0 or self.offset + offset > size:
+                raise ValueError('seek() offset outside of valid range.')
+            self.offset += offset
+        elif frame_of_reference == 2:
+            if size + offset < 0 or size + offset > size:
+                raise ValueError('seek() offset outside of valid range.')
+            self.offset = size + offset
+        else:
+            raise ValueError('seek() frame of reference must be 0, 1 or 2.')
+
+    def tell(self):
+        _check_blob_closed(self)
+        return self.offset
+
+    def write(self, data):
+        cdef:
+            bytes bdata = encode(data)
+            char *buf
+            int n, size
+            Py_ssize_t buflen
+
+        _check_blob_closed(self)
+        size = sqlite3_blob_bytes(self.blob)
+        PyBytes_AsStringAndSize(bdata, &buf, &buflen)
+        n = <int>buflen
+        if (n + self.offset) < self.offset:
+            raise ValueError('Data is too large (integer wrap)')
+        if (n + self.offset) > size:
+            raise ValueError('Data would go beyond end of blob')
+        if sqlite3_blob_write(self.blob, buf, n, self.offset):
+            raise_sqlite_error(self.conn.db, 'error writing to blob: ')
+        self.offset += <int>n
+
+    def close(self):
+        self._close()
+
+    def reopen(self, rowid):
+        _check_blob_closed(self)
+        self.offset = 0
+        if sqlite3_blob_reopen(self.blob, <sqlite3_int64>rowid):
+            self._close()
+            raise_sqlite_error(self.conn.db, 'unable to reopen blob: ')
+
+
 def status(flag):
     cdef int current, highwater, rc
 
@@ -540,3 +734,68 @@ def status(flag):
     if rc != SQLITE_OK:
         raise SqliteError('error requesting status: %s' % rc)
     return (current, highwater)
+
+
+cdef tuple sqlite_to_python(int argc, sqlite3_value **params):
+    cdef:
+        int i, vtype
+        tuple result = PyTuple_New(argc)
+
+    for i in range(argc):
+        vtype = sqlite3_value_type(params[i])
+        if vtype == SQLITE_INTEGER:
+            pyval = sqlite3_value_int(params[i])
+        elif vtype == SQLITE_FLOAT:
+            pyval = sqlite3_value_double(params[i])
+        elif vtype == SQLITE_TEXT:
+            pyval = PyUnicode_DecodeUTF8(
+                <const char *>sqlite3_value_text(params[i]),
+                <Py_ssize_t>sqlite3_value_bytes(params[i]), NULL)
+            Py_INCREF(pyval)
+        elif vtype == SQLITE_BLOB:
+            pyval = PyBytes_FromStringAndSize(
+                <const char *>sqlite3_value_blob(params[i]),
+                <Py_ssize_t>sqlite3_value_bytes(params[i]))
+            Py_INCREF(pyval)
+        elif vtype == SQLITE_NULL:
+            pyval = None
+        else:
+            pyval = None
+
+        PyTuple_SET_ITEM(result, i, pyval)
+
+    return result
+
+
+cdef python_to_sqlite(sqlite3_context *context, param):
+    cdef:
+        bytes tmp
+        char *buf
+        Py_ssize_t nbytes
+
+    if param is None:
+        sqlite3_result_null(context)
+    elif isinstance(param, int):
+        sqlite3_result_int64(context, <sqlite3_int64>param)
+    elif isinstance(param, float):
+        sqlite3_result_double(context, <double>param)
+    elif isinstance(param, unicode):
+        tmp = PyUnicode_AsUTF8String(param)
+        PyBytes_AsStringAndSize(tmp, &buf, &nbytes)
+        sqlite3_result_text64(context, buf,
+                              <sqlite3_uint64>nbytes,
+                              <sqlite3_destructor_type>-1,
+                              SQLITE_UTF8)
+    elif isinstance(param, bytes):
+        PyBytes_AsStringAndSize(<bytes>param, &buf, &nbytes)
+        sqlite3_result_blob64(context, <void *>buf,
+                              <sqlite3_uint64>nbytes,
+                              <sqlite3_destructor_type>-1)
+    else:
+        sqlite3_result_error(
+            context,
+            encode('Unsupported type %s' % type(param)),
+            -1)
+        return SQLITE_ERROR
+
+    return SQLITE_OK
