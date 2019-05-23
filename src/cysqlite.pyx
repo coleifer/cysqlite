@@ -4,6 +4,7 @@ from cpython.bytes cimport PyBytes_AsString
 from cpython.bytes cimport PyBytes_AsStringAndSize
 from cpython.bytes cimport PyBytes_FromStringAndSize
 from cpython.object cimport PyObject
+from cpython.ref cimport Py_CLEAR
 from cpython.ref cimport Py_DECREF
 from cpython.ref cimport Py_INCREF
 from cpython.ref cimport Py_XDECREF
@@ -428,7 +429,7 @@ cdef void _finalize_cb(sqlite3_context *ctx) with gil:
     else:
         python_to_sqlite(ctx, result)
 
-    Py_DECREF(agg)
+    del agg
 
 
 cdef void _value_cb(sqlite3_context *ctx) with gil:
