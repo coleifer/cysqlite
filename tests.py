@@ -162,3 +162,20 @@ for row in conn.execute(w_sql):
     pass
 
 conn.close()
+
+print('-' * 70)
+
+def my_collation(s1, s2):
+    x1 = s1.lower()[::-1]
+    x2 = s2.lower()[::-1]
+    return 1 if x1 > x2 else (0 if x1 == x2 else -1)
+
+conn.connect()
+conn.create_collation(my_collation, 'rev')
+
+conn.execute('create table kv (key text, value text)')
+conn.execute('insert into kv (key, value) values (?, ?), (?, ?), (?, ?)',
+             ('k1', 'v1x', 'k2', 'v222y', 'k3', 'v3a'))
+
+for row in conn.execute('select * from kv order by value collate rev'):
+    print(row)

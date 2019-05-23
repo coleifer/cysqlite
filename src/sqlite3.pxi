@@ -519,7 +519,12 @@ cdef extern from "sqlite3.h" nogil:
     cdef void sqlite3_result_zeroblob(sqlite3_context*, int n)
     cdef int sqlite3_result_zeroblob64(sqlite3_context*, sqlite3_uint64 n)
     cdef void sqlite3_result_subtype(sqlite3_context*,unsigned int)
-    cdef int sqlite3_create_collation(sqlite3*, const char *zName, int eTextRep, void *pArg, int(*xCompare)(void*,int,const void*,int,const void*))
+    cdef int sqlite3_create_collation(
+        sqlite3*,
+        const char *zName,
+        int eTextRep,
+        void *pArg,
+        int(*xCompare)(void*,int,const void*,int,const void*))
     cdef int sqlite3_create_collation_v2(sqlite3*, const char *zName, int eTextRep, void *pArg, int(*xCompare)(void*,int,const void*,int,const void*), void(*xDestroy)(void*))
     #cdef int sqlite3_create_collation16(sqlite3*, const void *zName, int eTextRep, void *pArg, int(*xCompare)(void*,int,const void*,int,const void*))
     cdef int sqlite3_collation_needed(sqlite3*, void*, void(*)(void*,sqlite3*,int eTextRep,const char*))

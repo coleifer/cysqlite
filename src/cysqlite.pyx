@@ -351,6 +351,26 @@ cdef class Connection(_callable_context_manager):
         if rc != SQLITE_OK:
             raise_sqlite_error(self.db, 'error creating aggregate: ')
 
+    def create_collation(self, fn, name):
+        cdef:
+            _Callback callback
+            bytes bname = encode(name or fn.__name__)
+            int rc
+
+        # Store reference to user-defined function.
+        callback = _Callback.__new__(_Callback, self, fn)
+        self.functions[name] = callback
+
+        rc = sqlite3_create_collation(
+            self.db,
+            <const char *>bname,
+            SQLITE_UTF8,
+            <void *>callback,
+            _collation_cb)
+
+        if rc != SQLITE_OK:
+            raise_sqlite_error(self.db, 'error creating collation: ')
+
 
 cdef class _Callback(object):
     cdef:
@@ -452,6 +472,30 @@ cdef void _inverse_cb(sqlite3_context *ctx, int argc, sqlite3_value **params) wi
         # XXX: report error back to conn.
         traceback.print_exc()
         sqlite3_result_error(ctx, b'error in user-defined window function', -1)
+
+
+cdef int _collation_cb(void *data, int n1, const void *data1,
+                       int n2, const void *data2) with gil:
+    cdef:
+        _Callback cb = <_Callback>data
+        int result = 0
+
+    str1 = PyUnicode_DecodeUTF8(<const char *>data1, n1, "replace")
+    str2 = PyUnicode_DecodeUTF8(<const char *>data2, n2, "replace")
+    if not str1 or not str2:
+        return result
+
+    try:
+        result = cb.fn(str1, str2)
+    except Exception as exc:
+        # XXX: report error back to conn.
+        traceback.print_exc()
+
+    if result > 0:
+        return 1
+    elif result < 0:
+        return -1
+    return 0
 
 
 cdef int _exec_callback(void *data, int argc, char **argv, char **colnames) with gil:
