@@ -147,15 +147,18 @@ data = (
     ('b', 1),
     ('b', 2),
     ('c', 100))
-for cat_val in data:
-    conn.execute('insert into sample (category, value) values (?, ?)', cat_val)
+for _ in range(10):
+    for cat_val in data:
+        conn.execute('insert into sample (category, value) values (?, ?)',
+                     cat_val)
 
-#agg_sql = 'select category, mysum(value) from sample group by category'
-#for row in conn.execute(agg_sql):
-#    print(row)
+agg_sql = 'select category, mysum(value) from sample group by category'
+for row in conn.execute(agg_sql):
+    print(row)
+
 w_sql = ('select category, mysumw(value) over (partition by category) '
          'from sample')
 for row in conn.execute(w_sql):
-    print(row)
+    pass
 
 conn.close()

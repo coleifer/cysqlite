@@ -429,7 +429,7 @@ cdef void _finalize_cb(sqlite3_context *ctx) with gil:
     else:
         python_to_sqlite(ctx, result)
 
-    del agg
+    Py_DECREF(agg)
 
 
 cdef void _value_cb(sqlite3_context *ctx) with gil:
