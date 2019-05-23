@@ -6,6 +6,7 @@ from cpython.bytes cimport PyBytes_FromStringAndSize
 from cpython.object cimport PyObject
 from cpython.ref cimport Py_DECREF
 from cpython.ref cimport Py_INCREF
+from cpython.ref cimport Py_XDECREF
 from cpython.tuple cimport PyTuple_New
 from cpython.tuple cimport PyTuple_SET_ITEM
 from cpython.unicode cimport PyUnicode_AsUTF8String
@@ -375,28 +376,38 @@ cdef void _function_cb(sqlite3_context *ctx, int argc, sqlite3_value **argv) wit
         python_to_sqlite(ctx, result)
 
 
-cdef void _step_cb(sqlite3_context *ctx, int argc, sqlite3_value **argv) with gil:
+ctypedef struct aggregate_ctx:
+    int in_use
+    PyObject *agg
+
+
+cdef object get_aggregate(sqlite3_context *ctx):
     cdef:
-        _Callback cb = <_Callback>sqlite3_user_data(ctx)
-        PyObject **obj_pp
-        tuple params
+        aggregate_ctx *agg_ctx = <aggregate_ctx *>sqlite3_aggregate_context(ctx, sizeof(aggregate_ctx))
+
+    if agg_ctx.in_use:
+        return <object>agg_ctx.agg
+
+    cdef _Callback cb = <_Callback>sqlite3_user_data(ctx)
+    try:
+        agg = cb.fn()  # Create aggregate instance.
+    except Exception as exc:
+        # XXX: report error back to conn.
+        traceback.print_exc()
+        sqlite3_result_error(ctx, b'error in user-defined aggregate', -1)
+        return
+
+    Py_INCREF(agg)
+    agg_ctx.in_use = 1
+    agg_ctx.agg = <PyObject *>agg
+    return agg
+
+
+cdef void _step_cb(sqlite3_context *ctx, int argc, sqlite3_value **argv) with gil:
+    cdef tuple params
 
     # Get the aggregate instance, creating it if this is the first call.
-    obj_pp = <PyObject **>sqlite3_aggregate_context(ctx, sizeof(PyObject *))
-    if obj_pp[0] == NULL:
-        try:
-            agg = cb.fn()
-        except Exception as exc:
-            # XXX: report error back to conn.
-            traceback.print_exc()
-            sqlite3_result_error(ctx, b'error in user-defined aggregate', -1)
-            return
-
-        obj_pp[0] = <PyObject *>agg
-        Py_INCREF(agg)
-    else:
-        agg = <object>(obj_pp[0])
-
+    agg = get_aggregate(ctx)
     params = sqlite_to_python(argc, argv)
     try:
         result = agg.step(*params)
@@ -407,11 +418,7 @@ cdef void _step_cb(sqlite3_context *ctx, int argc, sqlite3_value **argv) with gi
 
 
 cdef void _finalize_cb(sqlite3_context *ctx) with gil:
-    cdef PyObject **obj_pp
-
-    obj_pp = <PyObject **>sqlite3_aggregate_context(ctx, sizeof(PyObject *))
-    agg = <object>(obj_pp[0])
-
+    agg = get_aggregate(ctx)
     try:
         result = agg.finalize()
     except Exception as exc:
@@ -425,10 +432,7 @@ cdef void _finalize_cb(sqlite3_context *ctx) with gil:
 
 
 cdef void _value_cb(sqlite3_context *ctx) with gil:
-    cdef PyObject **obj_pp
-
-    obj_pp = <PyObject **>sqlite3_aggregate_context(ctx, sizeof(PyObject *))
-    agg = <object>(obj_pp[0])
+    agg = get_aggregate(ctx)
     try:
         result = agg.value()
     except Exception as exc:
@@ -440,11 +444,7 @@ cdef void _value_cb(sqlite3_context *ctx) with gil:
 
 
 cdef void _inverse_cb(sqlite3_context *ctx, int argc, sqlite3_value **params) with gil:
-    cdef PyObject **obj_pp
-
-    obj_pp = <PyObject **>sqlite3_aggregate_context(ctx, sizeof(PyObject *))
-    agg = <object>(obj_pp[0])
-
+    agg = get_aggregate(ctx)
     try:
         agg.inverse(*sqlite_to_python(argc, params))
     except Exception as exc:
