@@ -29,8 +29,8 @@ from src.cysqlite cimport *
 include "./sqlite3.pxi"
 
 
-class SqliteError(Exception):
-    pass
+class SqliteError(Exception): pass
+class OperationalError(SqliteError): pass
 
 
 # Forward references.
@@ -47,7 +47,7 @@ cdef class Blob(object)
 cdef raise_sqlite_error(sqlite3 *db, unicode msg):
     msg = msg or ''
     errmsg = sqlite3_errmsg(db)
-    raise SqliteError(msg + decode(errmsg))
+    raise OperationalError(msg + decode(errmsg))
 
 
 cdef class _callable_context_manager(object):
@@ -56,6 +56,11 @@ cdef class _callable_context_manager(object):
             with self:
                 return fn(*args, **kwargs)
         return inner
+
+
+cdef inline check_connection(Connection conn):
+    if not conn.db:
+        raise SqliteError('Cannot operate on a closed database!')
 
 
 cdef class Connection(_callable_context_manager):
@@ -165,6 +170,9 @@ cdef class Connection(_callable_context_manager):
 
         return True
 
+    cpdef is_closed(self):
+        return self.db == NULL
+
     def __enter__(self):
         if not self.db:
             self.connect()
@@ -205,10 +213,13 @@ cdef class Connection(_callable_context_manager):
             self.stmt_available.pop(first_key)
 
     def execute(self, sql, params=None):
+        check_connection(self)
         st = self.prepare(sql, params or ())
         return st.execute()
 
     def execute_simple(self, sql, callback=None):
+        check_connection(self)
+
         cdef:
             bytes bsql = encode(sql)
             char *errmsg
@@ -230,21 +241,27 @@ cdef class Connection(_callable_context_manager):
             raise_sqlite_error(self.db, 'error executing query: ')
 
     def changes(self):
+        check_connection(self)
         return sqlite3_changes(self.db)
 
     def total_changes(self):
+        check_connection(self)
         return sqlite3_total_changes(self.db)
 
     def last_insert_rowid(self):
+        check_connection(self)
         return sqlite3_last_insert_rowid(self.db)
 
     def interrupt(self):
+        check_connection(self)
         sqlite3_interrupt(self.db)
 
     def autocommit(self):
+        check_connection(self)
         return sqlite3_get_autocommit(self.db)
 
     def status(self, flag):
+        check_connection(self)
         cdef int current, highwater, rc
 
         if sqlite3_db_status(self.db, flag, &current, &highwater, 0):
@@ -252,26 +269,33 @@ cdef class Connection(_callable_context_manager):
         return (current, highwater)
 
     def transaction(self, lock=None):
+        check_connection(self)
         return Transaction(self, lock)
 
     def savepoint(self, sid=None):
+        check_connection(self)
         return Savepoint(self, sid)
 
     def atomic(self, lock=None):
+        check_connection(self)
         return Atomic(self, lock)
 
     def begin(self, lock=None):
+        check_connection(self)
         lock = encode(lock or b'DEFERRED')
         self.execute(b'BEGIN %s' % lock)
 
     def commit(self):
+        check_connection(self)
         self.execute(b'COMMIT')
 
     def rollback(self):
+        check_connection(self)
         self.execute(b'ROLLBACK')
 
     def backup(self, Connection dest, pages=None, name=None, progress=None,
                src_name=None):
+        check_connection(self)
         cdef:
             bytes bname = encode(name or 'main')
             bytes bsrcname = encode(src_name or 'main')
@@ -317,10 +341,12 @@ cdef class Connection(_callable_context_manager):
     def backup_to_file(self, filename, pages=None, name=None, progress=None,
                        src_name=None):
         cdef Connection dest = Connection(filename)
+        dest.connect()
         self.backup(dest, pages, name, progress, src_name)
         dest.close()
 
     def load_extension(self, name):
+        check_connection(self)
         cdef:
             bytes bname = encode(name)
             char *errmsg
@@ -331,6 +357,7 @@ cdef class Connection(_callable_context_manager):
             raise SqliteError('error loading extension: %s' % decode(errmsg))
 
     def create_function(self, fn, name=None, nargs=-1, deterministic=True):
+        check_connection(self)
         cdef:
             _Callback callback
             bytes bname = encode(name or fn.__name__)
@@ -357,6 +384,7 @@ cdef class Connection(_callable_context_manager):
             raise_sqlite_error(self.db, 'error creating function: ')
 
     def create_aggregate(self, agg, name=None, nargs=-1, deterministic=True):
+        check_connection(self)
         cdef:
             _Callback callback
             bytes bname = encode(name or agg.__name__)
@@ -385,6 +413,7 @@ cdef class Connection(_callable_context_manager):
 
     def create_window_function(self, agg, name=None, nargs=-1,
                                deterministic=True):
+        check_connection(self)
         cdef:
             _Callback callback
             bytes bname = encode(name or agg.__name__)
@@ -414,6 +443,7 @@ cdef class Connection(_callable_context_manager):
             raise_sqlite_error(self.db, 'error creating aggregate: ')
 
     def create_collation(self, fn, name):
+        check_connection(self)
         cdef:
             _Callback callback
             bytes bname = encode(name or fn.__name__)
@@ -434,6 +464,7 @@ cdef class Connection(_callable_context_manager):
             raise_sqlite_error(self.db, 'error creating collation: ')
 
     def commit_hook(self, fn):
+        check_connection(self)
         if fn is None:
             self._commit_hook = None
             sqlite3_commit_hook(self.db, NULL, NULL)
@@ -444,6 +475,7 @@ cdef class Connection(_callable_context_manager):
         sqlite3_commit_hook(self.db, _commit_cb, <void *>callback)
 
     def rollback_hook(self, fn):
+        check_connection(self)
         if fn is None:
             self._rollback_hook = None
             sqlite3_rollback_hook(self.db, NULL, NULL)
@@ -453,6 +485,7 @@ cdef class Connection(_callable_context_manager):
         sqlite3_rollback_hook(self.db, _rollback_cb, <void *>callback)
 
     def update_hook(self, fn):
+        check_connection(self)
         if fn is None:
             self._update_hook = None
             sqlite3_update_hook(self.db, NULL, NULL)
@@ -463,6 +496,7 @@ cdef class Connection(_callable_context_manager):
         sqlite3_update_hook(self.db, _update_cb, <void *>callback)
 
     def authorizer(self, fn):
+        check_connection(self)
         cdef:
             _Callback callback
             int rc
@@ -479,15 +513,18 @@ cdef class Connection(_callable_context_manager):
             raise_sqlite_error(self.db, 'error setting authorizer: ')
 
     def set_busy_handler(self, timeout=5):
+        check_connection(self)
         cdef sqlite3_int64 n = timeout * 1000
         sqlite3_busy_handler(self.db, _aggressive_busy_handler, <void *>n)
 
     def set_main_db_name(self, name):
+        check_connection(self)
         cdef bytes bname = encode(name)
         if sqlite3_db_config(self.db, SQLITE_DBCONFIG_MAINDBNAME,
                              <const char *>bname) != SQLITE_OK:
             raise_sqlite_error(self.db, 'error setting main db name: ')
     cdef _do_config(self, int config, int enabled):
+        check_connection(self)
         cdef int rc, status
         rc = sqlite3_db_config(self.db, config, enabled, &status)
         if rc != SQLITE_OK:
@@ -506,10 +543,42 @@ cdef class Connection(_callable_context_manager):
     def get_load_extension(self):
         return self._do_config(SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, -1)
     def set_shared_cache(self, int enabled):
+        check_connection(self)
         cdef int rc = sqlite3_enable_shared_cache(enabled)
         if rc != SQLITE_OK:
             raise_sqlite_error(self.db, 'error setting shared cache: ')
         return enabled
+
+    def set_autocheckpoint(self, int n):
+        check_connection(self)
+        if sqlite3_wal_autocheckpoint(self.db, n) != SQLITE_OK:
+            raise_sqlite_error(self.db, 'error setting wal autocheckpoint: ')
+
+    def checkpoint(self, full=False, truncate=False, name=None):
+        check_connection(self)
+        cdef:
+            bytes bname
+            const char *zDb = NULL
+            int mode = SQLITE_CHECKPOINT_PASSIVE
+            int pnLog, pnCkpt  # Size of WAL in frames, total num checkpointed.
+            int rc
+
+        if full:
+            mode = SQLITE_CHECKPOINT_FULL
+        elif truncate:
+            mode = SQLITE_CHECKPOINT_TRUNCATE
+
+        if name:
+            bname = encode(name)
+            zDb = bname
+
+        rc = sqlite3_wal_checkpoint_v2(self.db, zDb, mode, &pnLog, &pnCkpt)
+        if rc == SQLITE_MISUSE:
+            raise SqliteError('error: misuse - cannot perform wal checkpoint')
+        elif rc != SQLITE_OK:
+            raise_sqlite_error(self.db, 'error performing checkpoint: ')
+
+        return (pnLog, pnCkpt)
 
 
 cdef class _Callback(object):
