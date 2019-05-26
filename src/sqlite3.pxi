@@ -395,8 +395,16 @@ cdef extern from "sqlite3.h" nogil:
             const char*,
             const char*),
         void *pUserData)
-    cdef int sqlite3_trace_v2(sqlite3*, unsigned uMask, int(*xCallback)(unsigned,void*,void*,void*), void *pCtx)
-    cdef void sqlite3_progress_handler(sqlite3*, int, int(*)(void*), void*)
+    cdef int sqlite3_trace_v2(
+        sqlite3*,
+        unsigned uMask,
+        int(*xCallback)(unsigned,void*,void*,void*),
+        void *pCtx)
+    cdef void sqlite3_progress_handler(
+        sqlite3*,
+        int,
+        int(*)(void*),
+        void*)
     #cdef int sqlite3_open(const char *filename, sqlite3 **ppDb)
     #cdef int sqlite3_open16(const void *filename, sqlite3 **ppDb)
     cdef int sqlite3_open_v2(const char *filename, sqlite3 **ppDb, int flags, const char *zVfs)

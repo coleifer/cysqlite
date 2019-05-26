@@ -79,6 +79,7 @@ cdef class Connection(_callable_context_manager):
         dict stmt_in_use  # id(stmt) -> Statement.
         int _transaction_depth
         _Callback _commit_hook, _rollback_hook, _update_hook, _auth_hook
+        _Callback _trace_hook, _progress_hook
 
     def __init__(self, database, flags=None, timeout=5000, vfs=None, uri=False,
                  extensions=True, cached_statements=100):
@@ -130,6 +131,14 @@ cdef class Connection(_callable_context_manager):
         if self._auth_hook is not None:
             sqlite3_set_authorizer(self.db, NULL, NULL)
             self._auth_hook = None
+
+        # Clear trace and progress handler.
+        if self._trace_hook is not None:
+            sqlite3_trace_v2(self.db, 0, NULL, NULL)
+            self._trace_hook = None
+        if self._progress_hook is not None:
+            sqlite3_progress_handler(self.db, -1, NULL, NULL)
+            self._progress_hook = None
 
         cdef int rc = sqlite3_close_v2(self.db)
         if rc != SQLITE_OK:
@@ -853,6 +862,35 @@ cdef int _auth_cb(void *data, int op, const char *p1, const char *p2,
         traceback.print_exc()
         rc = SQLITE_OK
     return rc
+
+
+TRACE_STMT = 0x01
+TRACE_PROFILE = 0x02
+TRACE_ROW = 0x04
+TRACE_CLOSE = 0x08
+
+
+cdef int _trace_cb(unsigned mask, void *data, void *p, void *x) with gil:
+    cdef:
+        _Callback cb = <_Callback>data
+    # Integer return value is currently ignored, but this may change in future
+    # versions of sqlite3.
+    # TRACE_STMT invoked when a prepared stmt first begins running. P is a
+    # pointer to the statement, X is a pointer to the string of the SQL.
+    # TRACE_PROFILE - P points to a statement, X points to a 64-bit integer
+    # which is the estimated number of ns that the statement took to run.
+    # TRACE_ROW invoked when a statement generates a single row of results. P
+    # is a pointer to the statement, X is unused.
+    # TRACE_CLOSE is invoked when a database connection closes. P is a pointer
+    # to the db conn, X is unused.
+    pass
+
+
+cdef int _progress_cb(void *data) with gil:
+    cdef:
+        _Callback cb = <_Callback>data
+    # If returns non-zero, the operation is interrupted.
+    pass
 
 
 cdef int _exec_callback(void *data, int argc, char **argv, char **colnames) with gil:
