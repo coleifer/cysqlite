@@ -17,7 +17,7 @@ class BaseTestCase(unittest.TestCase):
                     os.unlink(filename)
 
     def setUp(self):
-        self.db = Connection(self.filename)
+        self.db = Connection(self.filename, cached_statements=6)
         self.db.connect()
 
     def tearDown(self):
@@ -39,7 +39,7 @@ class TestQueryExecution(BaseTestCase):
             self.db.execute('insert into "kv" ("key", "value", "extra") '
                             'values (?, ?, ?)', row)
 
-    def test_simple_query(self):
+    def test_simple_queries(self):
         self.create_table()
         self.create_rows(('k1', 'v1', 1), ('k2', 'v2', 20), ('k3', 'v3', 3))
         self.assertEqual(self.db.last_insert_rowid(), 3)
@@ -52,6 +52,9 @@ class TestQueryExecution(BaseTestCase):
                 (1, 'k1', 'v1', 1),
                 (2, 'k2', 'v2', 20),
                 (3, 'k3', 'v3', 3)])
+
+            # Second iteration yields no results.
+            self.assertEqual(list(curs), [])
 
     def test_autocommit(self):
         self.assertTrue(self.db.autocommit())
@@ -68,6 +71,15 @@ class TestQueryExecution(BaseTestCase):
             self.assertFalse(self.db.autocommit())
 
         self.assertTrue(self.db.autocommit())
+        curs = self.db.execute('select key from kv order by key')
+        self.assertEqual([row for row in curs], [('k1',), ('k3',)])
+
+        self.db.begin()
+        self.assertFalse(self.db.autocommit())
+        self.create_rows(('k4', 'v4', 4))
+        self.db.rollback()
+        self.assertTrue(self.db.autocommit())
+
         curs = self.db.execute('select key from kv order by key')
         self.assertEqual([row for row in curs], [('k1',), ('k3',)])
 

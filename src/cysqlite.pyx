@@ -1036,7 +1036,7 @@ cdef class Statement(object):
             row = self.get_row_data()
             self.step_status = sqlite3_step(self.st)
         elif self.step_status == SQLITE_DONE:
-            self.reset()
+            #self.reset()
             raise StopIteration
         else:
             raise_sqlite_error(self.conn.db, 'error executing query: ')
