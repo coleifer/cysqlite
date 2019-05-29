@@ -1237,29 +1237,6 @@ cdef class Statement(object):
             accum.append(decode(col_name))
         return accum
 
-    def details(self):
-        if not HAS_COLUMN_METADATA:
-            raise SqliteError('sqlite3 must be compiled with COLUMN_METADATA')
-
-        cdef:
-            bytes col_name, table_name, origin_name, decltype
-            int col_count, i
-            list accum = []
-
-        col_count = sqlite3_column_count(self.st)
-        for i in range(col_count):
-            col_name = sqlite3_column_name(self.st, i)
-            table_name = sqlite3_column_table_name(self.st, i)
-            origin_name = sqlite3_column_origin_name(self.st, i)
-            decltype = sqlite3_column_decltype(self.st, i)
-            accum.append((
-                decode(col_name),
-                decode(table_name),
-                decode(origin_name),
-                decode(decltype)))
-
-        return accum
-
     def is_readonly(self):
         if not self.st: raise SqliteError('statement is not available')
         return sqlite3_stmt_readonly(self.st)
