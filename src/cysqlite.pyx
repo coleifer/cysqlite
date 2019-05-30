@@ -1769,6 +1769,18 @@ HAS_COLUMN_METADATA = compile_option('enable_column_metadata')
 #HAS_STMT_SCANSTATUS = compile_option('enable_stmt_scanstatus')
 
 
+def vfs_list():
+    cdef:
+        sqlite3_vfs *vfs = sqlite3_vfs_find(NULL)
+        list accum = []
+
+    while vfs:
+        name = decode(vfs.zName)
+        accum.append(name)
+        vfs = vfs.pNext
+    return accum
+
+
 cdef tuple sqlite_to_python(int argc, sqlite3_value **params):
     cdef:
         int i, vtype

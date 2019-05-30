@@ -286,6 +286,12 @@ cdef extern from "sqlite3.h" nogil:
     cdef int SQLITE_DESERIALIZE_RESIZEABLE  # Resize using sqlite3_realloc64()
     cdef int SQLITE_DESERIALIZE_READONLY  # Database is read-only
 
+    ctypedef struct sqlite3_vfs:
+        sqlite3_vfs *pNext
+        const char *zName
+
+    cdef sqlite3_vfs *sqlite3_vfs_find(const char *zVfsName)
+
     ctypedef struct sqlite3_module  # Forward reference.
     ctypedef struct sqlite3_vtab:
         const sqlite3_module *pModule
