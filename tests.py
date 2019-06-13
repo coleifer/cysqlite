@@ -298,6 +298,19 @@ class TestQueryExecution(BaseTestCase):
             (1, 'select key from kv order by key'),
             (4, None), (4, None), (4, None)])
 
+    def test_progress(self):
+        accum = [0]
+        def progress():
+            accum[0] += 1
+
+        for i in range(100):
+            self.db.execute('insert into kv (key,value,extra) values (?,?,?)',
+                            ('k%02d' % i, 'v%s' % i, i))
+
+        self.db.progress(progress, 10)
+        results = list(self.db.execute('select * from kv order by key'))
+        self.assertTrue(accum[0] > 100)
+
     def test_exec_cb(self):
         accum = []
         def cb(row):
