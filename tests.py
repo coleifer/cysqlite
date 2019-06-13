@@ -285,6 +285,19 @@ class TestQueryExecution(BaseTestCase):
 
         self.db.authorizer(None)
 
+    def test_tracer(self):
+        accum = []
+        def tracer(code, sid, sql, ns):
+            accum.append((code, sql))
+
+        self.db.trace(tracer, TRACE_ROW | TRACE_STMT)
+        curs = self.db.execute('select key from kv order by key')
+        self.assertEqual([k for k, in curs], ['k1', 'k2', 'k3'])
+
+        self.assertEqual(accum, [
+            (1, 'select key from kv order by key'),
+            (4, None), (4, None), (4, None)])
+
     def test_exec_cb(self):
         accum = []
         def cb(row):
