@@ -117,32 +117,24 @@ cdef class Connection(_callable_context_manager):
         self.stmt_in_use = {}
 
         # Clear hooks.
-        if self._commit_hook is not None:
-            sqlite3_commit_hook(self.db, NULL, NULL)
-            self._commit_hook = None
-        if self._rollback_hook is not None:
-            sqlite3_rollback_hook(self.db, NULL, NULL)
-            self._rollback_hook = None
-        if self._update_hook is not None:
-            sqlite3_update_hook(self.db, NULL, NULL)
-            self._update_hook = None
+        self._commit_hook = None
+        self._rollback_hook = None
+        self._update_hook = None
 
-        # Clear authorizer.
-        if self._auth_hook is not None:
-            sqlite3_set_authorizer(self.db, NULL, NULL)
-            self._auth_hook = None
-
-        # Clear trace and progress handler.
-        if self._trace_hook is not None:
-            sqlite3_trace_v2(self.db, 0, NULL, NULL)
-            self._trace_hook = None
-        if self._progress_hook is not None:
-            sqlite3_progress_handler(self.db, -1, NULL, NULL)
-            self._progress_hook = None
+        # Clear authorizer and progress handler.
+        self._auth_hook = None
+        self._progress_hook = None
 
         cdef int rc = sqlite3_close_v2(self.db)
         if rc != SQLITE_OK:
             raise SqliteError('error closing database: %s' % rc)
+
+        # Clear the trace hook after closing the DB, since a trace may be sent
+        # upon the DB being closed.
+        if self._trace_hook is not None:
+            sqlite3_trace_v2(self.db, 0, NULL, NULL)
+            self._trace_hook = None
+
         self.db = NULL
         return True
 
