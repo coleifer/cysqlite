@@ -1881,7 +1881,7 @@ cdef uint32_t murmurhash2(const unsigned char *key, ssize_t nlen,
     return h
 
 
-def cymurmurhash(key, seed=None):
+def murmurhash(key, seed=None):
     if key is None:
         return
 

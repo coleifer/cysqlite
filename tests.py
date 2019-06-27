@@ -750,22 +750,55 @@ class TestRankUDFs(BaseTestCase):
 
     def setUp(self):
         super(TestRankUDFs, self).setUp()
-        self.db.execute('create virtual table search using fts4 (content)')
+        self.db.execute('create virtual table search using fts4 (content, '
+                        'prefix=\'2,3\', tokenize="porter")')
         for i, s in enumerate(self.test_data):
             self.db.execute('insert into search (docid, content) values (?,?)',
                             (i + 1, s))
         self.db.create_function(rank_bm25, 'rank_bm25')
+        self.db.create_function(rank_lucene, 'rank_lucene')
 
-    def assertSearch(self, q, expected):
+    def assertSearch(self, q, expected, fn='rank_bm25'):
         curs = self.db.execute('select docid, '
-                               'rank_bm25(matchinfo(search, ?), 1) AS r '
+                               '%s(matchinfo(search, ?), 1) AS r '
                                'from search where search match ? '
-                               'order by r', ('pcnalx', q))
-        results = [(docid, round(score, 2)) for docid, score in curs]
+                               'order by r' % fn, ('pcnalx', q))
+        results = [(docid, round(score, 3)) for docid, score in curs]
         self.assertEqual(results, expected)
 
     def test_scoring(self):
-        self.assertSearch('things', [(5, -0.45), (3, -0.36)])
+        self.assertSearch('things', [(5, -0.448), (3, -0.363)])
+        self.assertSearch('believe', [(4, -0.487), (1, -0.353)])
+        self.assertSearch('god faith', [(2, -0.921)])
+        self.assertSearch('"it is"', [(3, -0.363), (4, -0.363)])
+
+        self.assertSearch('things', [(5, -0.166), (3, -0.137)], 'rank_lucene')
+        self.assertSearch('believe', [(4, -0.193), (1, -0.132)], 'rank_lucene')
+        self.assertSearch('god faith', [(2, -0.147)], 'rank_lucene')
+        self.assertSearch('"it is"', [(3, -0.137), (4, -0.137)], 'rank_lucene')
+        self.assertSearch('faith', [
+            (2, 0.036), (5, 0.042), (1, 0.047), (3, 0.049), (4, 0.049)],
+            'rank_lucene')
+
+
+class TestMurmurHashUDF(BaseTestCase):
+    filename = ':memory:'
+
+    def setUp(self):
+        super(TestMurmurHashUDF, self).setUp()
+        self.db.create_function(murmurhash, 'murmurhash')
+
+    def assertHash(self, s, expected):
+        cursor = self.db.execute('select murmurhash(?)', (s,))
+        result, = [hsh for hsh, in cursor]
+        self.assertEqual(result, expected)
+
+    def test_murmur_hash(self):
+        self.assertHash('testkey', 2871421366)
+        self.assertHash('murmur', 3883399899)
+        self.assertHash('', 0)
+        self.assertHash('this is a test of a longer string', 2569735385)
+        self.assertHash(None, None)
 
 
 if __name__ == '__main__':
