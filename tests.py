@@ -801,5 +801,59 @@ class TestMurmurHashUDF(BaseTestCase):
         self.assertHash(None, None)
 
 
+class TestStringDistanceUDFs(BaseTestCase):
+    filename = ':memory:'
+
+    def setUp(self):
+        super(TestStringDistanceUDFs, self).setUp()
+        self.db.create_function(levenshtein_dist, 'levdist')
+        self.db.create_function(damerau_levenshtein_dist, 'dlevdist')
+
+    def _assertLev(self, f, s1, s2, n):
+        curs = self.db.execute('select %s(?, ?)' % f, (s1, s2))
+        score, = next(curs)
+        self.assertEqual(score, n, '(%s, %s) %s != %s' % (s1, s2, n, score))
+
+    def assertLev(self, s1, s2, n):
+        self._assertLev('levdist', s1, s2, n)
+
+    def assertDLev(self, s1, s2, n):
+        self._assertLev('dlevdist', s1, s2, n)
+
+    def test_levdist(self):
+        cases = (
+            ('abc', 'abc', 0),
+            ('abc', 'abcd', 1),
+            ('abc', 'acb', 2),
+            ('aabc', 'acab', 2),
+            ('abc', 'cba', 2),
+            ('abc', 'bca', 2),
+            ('abc', 'def', 3),
+            ('abc', '', 3),
+            ('abc', 'deabcfg', 4),
+        )
+        for s1, s2, n in cases:
+            self.assertLev(s1, s2, n)
+            self.assertLev(s2, s1, n)
+
+    def test_dlevdist(self):
+        cases = (
+            ('abc', 'abc', 0),
+            ('abc', 'abcd', 1),
+            ('abc', 'acb', 1),  # Transpositions.
+            ('aabc', 'acab', 2),
+            ('abc', 'cba', 2),
+            ('abc', 'bca', 2),
+            ('abc', 'def', 3),
+            ('abc', '', 3),
+            ('abc', 'deabcfg', 4),
+            ('abced', 'abcde', 1),  # Adjacent transposition.
+            ('abcde', 'abdec', 2),
+        )
+        for s1, s2, n in cases:
+            self.assertDLev(s1, s2, n)
+            self.assertDLev(s2, s1, n)
+
+
 if __name__ == '__main__':
     unittest.main(argv=sys.argv)
