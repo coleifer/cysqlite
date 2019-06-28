@@ -40,6 +40,25 @@ class BaseTestCase(unittest.TestCase):
                             'values (?, ?, ?)', row)
 
 
+class TestCheckConnection(BaseTestCase):
+    filename = ':memory:'
+
+    def test_check_connection(self):
+        self.assertFalse(self.db.is_closed())
+        self.assertEqual(self.db.changes(), 0)
+        self.assertEqual(self.db.total_changes(), 0)
+        self.assertEqual(self.db.last_insert_rowid(), 0)
+        self.assertTrue(self.db.autocommit())
+
+        self.db.close()
+        self.assertTrue(self.db.is_closed())
+        self.assertRaises(SqliteError, self.db.changes)
+        self.assertRaises(SqliteError, self.db.total_changes)
+        self.assertRaises(SqliteError, self.db.last_insert_rowid)
+        self.assertRaises(SqliteError, self.db.autocommit)
+        self.assertRaises(SqliteError, self.db.execute, 'select 1')
+
+
 class TestExecute(BaseTestCase):
     filename = ':memory:'
 
