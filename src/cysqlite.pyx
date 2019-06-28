@@ -230,6 +230,9 @@ cdef class Connection(_callable_context_manager):
         st = self.prepare(sql, params or ())
         return st.execute()
 
+    def execute_one(self, sql, params=None):
+        return next(self.execute(sql, params))
+
     def execute_simple(self, sql, callback=None):
         check_connection(self)
 

@@ -40,6 +40,23 @@ class BaseTestCase(unittest.TestCase):
                             'values (?, ?, ?)', row)
 
 
+class TestExecute(BaseTestCase):
+    filename = ':memory:'
+
+    def test_execute(self):
+        self.db.execute('create table g (k, v)')
+        self.db.execute('insert into g (k, v) values (?, ?), (?, ?), (?, ?)',
+                        ('k1', 1, 'k2', 2, 'k3', 3))
+        curs = self.db.execute('select * from g order by v')
+        self.assertEqual(list(curs), [('k1', 1), ('k2', 2), ('k3', 3)])
+
+        row = self.db.execute_one('select * from g where k = ?', ('k2',))
+        self.assertEqual(row, ('k2', 2))
+
+        row = self.db.execute_one('select sum(v) from g')
+        self.assertEqual(row, (6,))
+
+
 class TestQueryExecution(BaseTestCase):
     filename = ':memory:'
     test_data = [('k1', 'v1x', 10), ('k2', 'v2b', 20), ('k3', 'v3z', 30)]
@@ -856,7 +873,7 @@ class TestStringDistanceUDFs(BaseTestCase):
 
 
 class TestMedianUDF(BaseTestCase):
-    database = ':memory:'
+    filename = ':memory:'
 
     def setUp(self):
         super(TestMedianUDF, self).setUp()
@@ -871,8 +888,7 @@ class TestMedianUDF(BaseTestCase):
         self.db.execute('insert into g(x) values %s' % expr, values)
 
     def assertMedian(self, expected):
-        curs = self.db.execute('select median(x) from g')
-        row, = list(curs)
+        row = self.db.execute_one('select median(x) from g')
         self.assertEqual(row[0], expected)
 
     def test_median_aggregate(self):
