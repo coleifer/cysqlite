@@ -1078,11 +1078,12 @@ cdef class Atomic(_callable_context_manager):
 
 cdef class Statement(object):
     cdef:
-        Connection conn
+        readonly Connection conn
         sqlite3_stmt *st
         bytes sql
         int step_status
         object row_data
+        tuple _description
 
     def __init__(self, Connection conn, sql):
         self.conn = conn
@@ -1092,6 +1093,7 @@ cdef class Statement(object):
 
         self.step_status = -1
         self.row_data = None
+        self._description = None
 
     def __dealloc__(self):
         if self.st:
@@ -1231,7 +1233,7 @@ cdef class Statement(object):
         if not self.st: raise SqliteError('statement is not available')
         return sqlite3_column_count(self.st)
 
-    def description(self):
+    def columns(self):
         cdef:
             bytes col_name
             int col_count, i
@@ -1242,6 +1244,12 @@ cdef class Statement(object):
             col_name = sqlite3_column_name(self.st, i)
             accum.append(decode(col_name))
         return accum
+
+    @property
+    def description(self):
+        if self._description is None:
+            self._description = tuple([(name,) for name in self.columns()])
+        return self._description
 
     def is_readonly(self):
         if not self.st: raise SqliteError('statement is not available')
