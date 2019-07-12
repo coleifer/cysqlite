@@ -1668,6 +1668,8 @@ cdef class _TableFunctionImpl(object):
         self.table_function = table_function
 
     cdef create_module(self, Connection conn):
+        check_connection(conn)
+
         cdef:
             bytes name = encode(self.table_function.name)
             sqlite3 *db = conn.db
