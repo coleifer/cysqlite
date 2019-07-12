@@ -125,6 +125,17 @@ class TestQueryExecution(BaseTestCase):
             curs = self.db.execute('select * from kv order by key')
             self.assertEqual([row[1:] for row in curs], self.test_data)
 
+    def test_nested_iteration(self):
+        curs = self.db.execute('select key from kv order by key')
+        outer = []
+        inner = []
+        for key_o, in curs:
+            outer.append(key_o)
+            for key_i, in curs:
+                inner.append(key_i)
+        self.assertEqual(outer, ['k1'])
+        self.assertEqual(inner, ['k2', 'k3'])
+
     def test_autocommit(self):
         self.db.execute('delete from kv')
         self.assertTrue(self.db.autocommit())

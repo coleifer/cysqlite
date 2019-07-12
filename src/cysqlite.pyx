@@ -1164,9 +1164,10 @@ cdef class Statement(object):
     def __next__(self):
         row = None
 
-        # Perform the first call to sqlite3_step.
+        # Statement has already been consumed and cannot be re-run without
+        # calling .execute() again.
         if self.step_status == -1:
-            self.step_status = sqlite3_step(self.st)
+            raise StopIteration
 
         if self.step_status == SQLITE_ROW:
             row = self.get_row_data()
