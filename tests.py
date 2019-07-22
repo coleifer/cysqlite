@@ -431,6 +431,21 @@ class TestSmallCache(BaseTestCase):
         self.assertTrue(self.db.connect())
         self.assertEqual(self.db.get_stmt_cache(), (0, 0))
 
+    def test_cached_statement(self):
+        self.create_table()
+        self.create_rows(('k1', 'v1', 1))
+
+        curs = self.db.execute('select * from kv')
+        curs_id = id(curs)  # Which statement is this?
+        self.assertEqual(self.db.get_stmt_cache(), (2, 1))
+        self.assertEqual(list(curs), [(1, 'k1', 'v1', 1)])
+        self.assertEqual(self.db.get_stmt_cache(), (3, 0))
+
+        curs = self.db.execute('select * from kv')
+        self.assertEqual(id(curs), curs_id)  # Same cursor as before.
+        self.assertEqual(self.db.get_stmt_cache(), (2, 1))
+        self.db.close()
+
 
 class TestBlob(BaseTestCase):
     def setUp(self):
