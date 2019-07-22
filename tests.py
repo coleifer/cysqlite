@@ -446,6 +446,15 @@ class TestSmallCache(BaseTestCase):
         self.assertEqual(self.db.get_stmt_cache(), (2, 1))
         self.db.close()
 
+    def test_cache_release(self):
+        self.create_table()
+        self.assertEqual(self.db.get_stmt_cache(), (1, 0))
+
+        curs = self.db.execute('select count(*) from kv')
+        self.assertEqual(self.db.get_stmt_cache(), (1, 1))
+        self.assertEqual(curs.value(), 0)  # value() recycles stmt.
+        self.assertEqual(self.db.get_stmt_cache(), (2, 0))
+
 
 class TestBlob(BaseTestCase):
     def setUp(self):
