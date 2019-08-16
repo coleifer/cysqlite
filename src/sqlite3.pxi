@@ -657,3 +657,6 @@ cdef extern from "sqlite3.h" nogil:
     cdef int sqlite3_system_errno(sqlite3*)
     cdef unsigned char *sqlite3_serialize(sqlite3 *db, const char *zSchema, sqlite3_int64 *piSize, unsigned int mFlags)
     cdef int sqlite3_deserialize(sqlite3 *db, const char *zSchema, unsigned char *pData, sqlite3_int64 szDb, sqlite3_int64 szBuf, unsigned mFlags)
+
+
+cdef int SQLITE_JSON_TYPE = 74  # ASCII 'J', from sqlite/ext/misc/json.c.
