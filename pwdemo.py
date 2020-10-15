@@ -1,3 +1,5 @@
+import hashlib
+
 from cysqlite import Connection
 
 from peewee import __exception_wrapper__
@@ -128,6 +130,13 @@ class Tweet(Base):
     content = TextField()
     timestamp = TimestampField()
 
+@db.func('md5')
+def hash_fn(s):
+    if isinstance(s, str):
+        s = s.encode('utf8')
+    return hashlib.md5(s).hexdigest()
+
+
 db.create_tables([User, Tweet])
 
 with db.atomic() as tx:
@@ -143,6 +152,6 @@ with db.atomic() as tx:
 query = User.select().order_by(User.username)
 assert [u.username for u in query] == ['u1', 'u2']
 
-query = Tweet.select(Tweet, User).join(User).order_by(User.username, Tweet.id)
+query = Tweet.select(Tweet, User, fn.md5(User.username).alias('hsh')).join(User).order_by(User.username, Tweet.id)
 for tweet in query:
-    print(tweet.user.username, tweet.timestamp, tweet.content)
+    print(tweet.user.username, tweet.timestamp, tweet.content, tweet.hsh)
