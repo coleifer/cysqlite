@@ -406,11 +406,11 @@ class TestQueryExecution(BaseTestCase):
 
     def test_table_column_metadata(self):
         self.assertEqual(self.db.table_column_metadata('kv', 'id'), (
-            'kv', 'id', 'integer', 'BINARY', 1, 1, 0))
+            'kv', 'id', 'INTEGER', 'BINARY', 1, 1, 0))
         self.assertEqual(self.db.table_column_metadata('kv', 'key'), (
-            'kv', 'key', 'text', 'BINARY', 1, 0, 0))
+            'kv', 'key', 'TEXT', 'BINARY', 1, 0, 0))
         self.assertEqual(self.db.table_column_metadata('kv', 'extra'), (
-            'kv', 'extra', 'integer', 'BINARY', 0, 0, 0))
+            'kv', 'extra', 'INTEGER', 'BINARY', 0, 0, 0))
 
 
 class TestSmallCache(BaseTestCase):
