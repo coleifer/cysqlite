@@ -354,7 +354,7 @@ cdef extern from "sqlite3.h" nogil:
     cdef int sqlite3_libversion_number()
     cdef int sqlite3_compileoption_used(const char *zOptName)
     #cdef const char *sqlite3_compileoption_get(int N)
-    #cdef int sqlite3_threadsafe()
+    cdef int sqlite3_threadsafe()
     #cdef int sqlite3_close(sqlite3*)
     cdef int sqlite3_close_v2(sqlite3*)
     cdef int sqlite3_exec(sqlite3*, const char *sql,

@@ -4,6 +4,7 @@ from cpython.bytes cimport PyBytes_AsString
 from cpython.bytes cimport PyBytes_AsStringAndSize
 from cpython.bytes cimport PyBytes_FromStringAndSize
 from cpython.object cimport PyObject
+from cpython.pythread cimport PyThread_get_thread_ident
 from cpython.ref cimport Py_DECREF
 from cpython.ref cimport Py_INCREF
 from cpython.tuple cimport PyTuple_New
@@ -11,10 +12,12 @@ from cpython.tuple cimport PyTuple_SET_ITEM
 from cpython.unicode cimport PyUnicode_AsUTF8String
 from cpython.unicode cimport PyUnicode_DecodeUTF8
 from libc.float cimport DBL_MAX
+from libc.limits cimport INT_MAX
 from libc.math cimport log
 from libc.math cimport sqrt
 from libc.stdint cimport int64_t
 from libc.stdint cimport uint32_t
+from libc.stdint cimport uintptr_t
 from libc.stdlib cimport free
 from libc.stdlib cimport malloc
 from libc.stdlib cimport rand
@@ -32,8 +35,36 @@ from src.cysqlite cimport *
 include "./sqlite3.pxi"
 
 
+# DB-API 2.0 module attributes.
+apilevel = '2.0'
+paramstyle = 'qmark'
+
+cdef int _determine_threadsafety():
+    cdef int mode = sqlite3_threadsafe()
+    if mode == 0:
+        return 0
+    elif mode == 1:
+        return 3
+    return 1
+
+threadsafety = _determine_threadsafety()
+
+version = '0.1.0'
+version_info = (0, 1, 0)
+
 class SqliteError(Exception): pass
-class OperationalError(SqliteError): pass
+class Error(SqliteError): pass
+class Warning(SqliteError): pass
+
+class InterfaceError(Error): pass
+class DatabaseError(Error): pass
+
+class DataError(DatabaseError): pass
+class OperationalError(DatabaseError): pass
+class IntegrityError(DatabaseError): pass
+class InternalError(DatabaseError): pass
+class ProgrammingError(DatabaseError): pass
+class NotSupportedError(DatabaseError): pass
 
 
 # Forward references.
@@ -46,11 +77,25 @@ cdef class Blob(object)
 # TODO:
 # - introspection.
 
-
 cdef raise_sqlite_error(sqlite3 *db, unicode msg):
-    msg = msg or ''
-    errmsg = sqlite3_errmsg(db)
-    raise OperationalError(msg + decode(errmsg))
+    cdef int code = sqlite3_errcode(db)
+    cdef int ext = sqlite3_extended_errcode(db)
+    errmsg = decode(sqlite3_errmsg(db))
+
+    if code in (SQLITE_CONSTRAINT,):
+        exc = IntegrityError
+    elif code in (SQLITE_MISUSE,):
+        exc = ProgrammingError
+    elif code in (SQLITE_INTERNAL,):
+        exc = InternalError
+    elif code in (SQLITE_NOMEM,):
+        exc = MemoryError
+    elif code in (SQLITE_ABORT, SQLITE_INTERRUPT):
+        exc = OperationalError
+    else:
+        exc = OperationalError
+
+    raise exc(f"{msg}{errmsg} (code={code}, ext={ext})")
 
 
 cdef class _callable_context_manager(object):
@@ -63,12 +108,21 @@ cdef class _callable_context_manager(object):
 
 cdef inline check_connection(Connection conn):
     if not conn.db:
-        raise SqliteError('Cannot operate on a closed database!')
+        raise OperationalError('Cannot operate on a closed database!')
+    if conn.check_same_thread:
+        check_thread(conn)
+
+cdef inline int check_thread(Connection conn) except -1:
+    if PyThread_get_thread_ident() != conn.thread_ident:
+        raise ProgrammingError(
+            'SQLite objects created in a thread can only be used in that '
+            'same thread')
 
 
 cdef class Connection(_callable_context_manager):
     cdef:
         sqlite3 *db
+        uintptr_t thread_ident
         public bint extensions
         public bint uri
         public int cached_statements
@@ -76,6 +130,7 @@ cdef class Connection(_callable_context_manager):
         public int timeout
         public str database
         public str vfs
+        bint check_same_thread
         # List of statements, transactions, savepoints, blob handles?
         dict functions
         dict stmt_available  # sql -> Statement.
@@ -85,7 +140,8 @@ cdef class Connection(_callable_context_manager):
         _Callback _trace_hook, _progress_hook
 
     def __init__(self, database, flags=None, timeout=5000, vfs=None, uri=False,
-                 extensions=True, cached_statements=100):
+                 extensions=True, cached_statements=100,
+                 check_same_thread=True):
         self.database = decode(database)
         self.flags = flags or 0
         self.timeout = timeout
@@ -93,6 +149,8 @@ cdef class Connection(_callable_context_manager):
         self.uri = uri
         self.extensions = extensions
         self.cached_statements = cached_statements
+        self.check_same_thread = check_same_thread
+        self.thread_ident = PyThread_get_thread_ident()
 
         self.db = NULL
         self.functions = {}
@@ -101,8 +159,8 @@ cdef class Connection(_callable_context_manager):
         self._transaction_depth = 0
 
     def __dealloc__(self):
-        if self.db:
-            sqlite3_close_v2(self.db)
+        if self.db and sqlite3_close_v2(self.db) == SQLITE_OK:
+            self.db = NULL
 
     def close(self):
         if not self.db:
@@ -260,12 +318,13 @@ cdef class Connection(_callable_context_manager):
 
         try:
             rc = sqlite3_exec(self.db, bsql, _exec_callback, userdata, &errmsg)
+            if rc != SQLITE_OK:
+                raise_sqlite_error(self.db, 'error executing query: ')
+        except Exception:
+            raise
         finally:
             if callback is not None:
                 Py_DECREF(callback)
-
-        if rc != SQLITE_OK:
-            raise_sqlite_error(self.db, 'error executing query: ')
 
     def changes(self):
         check_connection(self)
@@ -286,6 +345,11 @@ cdef class Connection(_callable_context_manager):
     def autocommit(self):
         check_connection(self)
         return sqlite3_get_autocommit(self.db)
+
+    @property
+    def in_transaction(self):
+        check_connection(self)
+        return not sqlite3_get_autocommit(self.db)
 
     def status(self, flag):
         check_connection(self)
@@ -365,6 +429,7 @@ cdef class Connection(_callable_context_manager):
             raise_sqlite_error(dest.db, 'error initializing backup: ')
 
         while True:
+            check_connection(self)
             with nogil:
                 rc = sqlite3_backup_step(backup, page_step)
 
@@ -373,7 +438,7 @@ cdef class Connection(_callable_context_manager):
                 page_count = sqlite3_backup_pagecount(backup)
                 try:
                     progress(remaining, page_count, rc == SQLITE_DONE)
-                except:
+                except (ValueError, TypeError, KeyboardInterrupt) as exc:
                     sqlite3_backup_finish(backup)
                     raise
 
@@ -386,6 +451,7 @@ cdef class Connection(_callable_context_manager):
                 sqlite3_backup_finish(backup)
                 raise_sqlite_error(dest.db, 'error backing up database: ')
 
+        check_connection(self)
         with nogil:
             rc = sqlite3_backup_finish(backup)
 
@@ -709,6 +775,7 @@ cdef class Statement(object):
             raise_sqlite_error(self.conn.db, 'error compiling statement: ')
 
     cdef bind(self, tuple params):
+        check_connection(self.conn)
         cdef:
             bytes tmp
             char *buf
@@ -746,11 +813,14 @@ cdef class Statement(object):
                 raise_sqlite_error(self.conn.db, 'error binding parameter: ')
 
     cdef reset(self):
+        check_connection(self.conn)
         if self.st == NULL:
             return 0
         self.step_status = -1
         cdef int rc = sqlite3_reset(self.st)
+        sqlite3_clear_bindings(self.st)
         self.conn.stmt_release(self)
+
         if rc != SQLITE_OK:
             raise_sqlite_error(self.conn.db, 'error resetting statement: ')
 
@@ -761,6 +831,7 @@ cdef class Statement(object):
         return self
 
     def __next__(self):
+        check_connection(self.conn)
         row = None
 
         # Statement has already been consumed and cannot be re-run without
@@ -791,8 +862,10 @@ cdef class Statement(object):
             self.reset()
 
     def execute(self):
+        check_connection(self.conn)
+
         if self.step_status != -1:
-            raise SqliteError('statement has already been executed.')
+            self.reset()
 
         self.step_status = sqlite3_step(self.st)
         if self.step_status == SQLITE_DONE:
@@ -877,11 +950,18 @@ cdef class _Callback(object):
         self.conn = conn
         self.fn = fn
 
+cdef inline bint callback_allowed(Connection conn):
+    if not conn.check_same_thread:
+        return True
+    return PyThread_get_thread_ident() == conn.thread_ident
 
 cdef void _function_cb(sqlite3_context *ctx, int argc, sqlite3_value **argv) noexcept with gil:
     cdef:
         _Callback cb = <_Callback>sqlite3_user_data(ctx)
         tuple params = sqlite_to_python(argc, argv)
+
+    if not callback_allowed(cb.conn):
+        sqlite3_result_error(ctx, b'callback invoked from wrong thread', -1)
 
     try:
         result = cb.fn(*params)
@@ -1217,18 +1297,17 @@ cdef class Transaction(_callable_context_manager):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         is_bottom = self.conn._transaction_depth == 1
-        try:
-            if exc_type:
-                # If there are still more transactions on the stack, then we
-                # will begin a new transaction.
-                self.rollback(not is_bottom)
-            elif is_bottom and not sqlite3_get_autocommit(self.conn.db):
-                try:
-                    self.commit(False)
-                except:
-                    self.rollback(False)
-        finally:
-            self.conn._transaction_depth -= 1
+        self.conn._transaction_depth -= 1
+
+        if exc_type:
+            # If there are still more transactions on the stack, then we
+            # will begin a new transaction.
+            self.rollback(not is_bottom)
+        elif is_bottom and not sqlite3_get_autocommit(self.conn.db):
+            try:
+                self.commit(False)
+            except:
+                self.rollback(False)
 
 
 cdef class Savepoint(_callable_context_manager):
@@ -1340,6 +1419,13 @@ cdef class Blob(object):
     def __dealloc__(self):
         self._close()
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
     def __len__(self):
         _check_blob_closed(self)
         return sqlite3_blob_bytes(self.blob)
@@ -1387,7 +1473,7 @@ cdef class Blob(object):
                 raise ValueError('seek() offset outside of valid range.')
             self.offset += offset
         elif frame_of_reference == 2:
-            if size + offset < 0 or size + offset > size:
+            if size + offset < 0:
                 raise ValueError('seek() offset outside of valid range.')
             self.offset = size + offset
         else:
@@ -1407,6 +1493,8 @@ cdef class Blob(object):
 
         size = sqlite3_blob_bytes(self.blob)
         PyBytes_AsStringAndSize(bdata, &buf, &buflen)
+        if buflen > <Py_ssize_t>INT_MAX:
+            raise ValueError('Data is too large')
         n = <int>buflen
         if (n + self.offset) < self.offset:
             raise ValueError('Data is too large (integer wrap)')
@@ -1510,6 +1598,8 @@ cdef int cyClose(sqlite3_vtab_cursor *pBase) noexcept with gil:
     cdef:
         cysqlite_cursor *pCur = <cysqlite_cursor *>pBase
         object table_func = <object>pCur.table_func
+    if pCur.row_data:
+        Py_DECREF(<tuple>pCur.row_data)
     Py_DECREF(table_func)
     sqlite3_free(pCur)
     return SQLITE_OK
@@ -1603,11 +1693,10 @@ cdef int cyFilter(sqlite3_vtab_cursor *pBase, int idxNum,
     py_values = sqlite_to_python(argc, argv)
 
     for idx, param in enumerate(params):
-        value = argv[idx]
-        if not value:
-            query[param] = None
-        else:
+        if idx < argc:
             query[param] = py_values[idx]
+        else:
+            query[param] = None
 
     try:
         table_func.initialize(**query)
@@ -1675,7 +1764,7 @@ cdef int cyBestIndex(sqlite3_vtab *pBase, sqlite3_index_info *pIdxInfo) \
         memcpy(idxStr, <char *>joinedCols, len(joinedCols))
         idxStr[len(joinedCols)] = b'\x00'
         pIdxInfo.idxStr = idxStr
-        pIdxInfo.needToFreeIdxStr = 0
+        pIdxInfo.needToFreeIdxStr = -1
         return SQLITE_OK
 
     return SQLITE_CONSTRAINT
@@ -1768,9 +1857,26 @@ class TableFunction(object):
 
         return ', '.join(accum)
 
-
 sqlite_version = decode(sqlite3_version)
 sqlite_version_info = sqlite3_libversion_number()
+
+def connect(database, flags=None, timeout=5000, vfs=None, uri=False,
+            extensions=True, cached_statements=100, check_same_thread=True,
+            factory=None):
+    """Open a connection to an SQLite database."""
+    factory = factory or Connection
+    if timeout <= 60:
+        timeout = int(timeout * 1000)
+
+    conn = factory(database,
+                   flags=flags,
+                   timeout=timeout,
+                   vfs=vfs,
+                   uri=uri,
+                   extensions=extensions,
+                   cached_statements=cached_statements,
+                   check_same_thread=check_same_thread)
+    return conn
 
 
 def status(flag):
@@ -1831,7 +1937,7 @@ cdef tuple sqlite_to_python(int argc, sqlite3_value **params):
     for i in range(argc):
         vtype = sqlite3_value_type(params[i])
         if vtype == SQLITE_INTEGER:
-            pyval = sqlite3_value_int(params[i])
+            pyval = sqlite3_value_int64(params[i])
         elif vtype == SQLITE_FLOAT:
             pyval = sqlite3_value_double(params[i])
         elif vtype == SQLITE_TEXT:
@@ -1890,59 +1996,6 @@ cdef python_to_sqlite(sqlite3_context *context, param):
 # Misc helpers and user-defined functions / aggregates.
 
 
-cdef uint32_t murmurhash2(const unsigned char *key, ssize_t nlen,
-                          uint32_t seed):
-    cdef:
-        uint32_t m = 0x5bd1e995
-        int r = 24
-        const unsigned char *data = key
-        uint32_t h = seed ^ nlen
-        uint32_t k
-
-    while nlen >= 4:
-        k = <uint32_t>((<uint32_t *>data)[0])
-
-        k *= m
-        k = k ^ (k >> r)
-        k *= m
-
-        h *= m
-        h = h ^ k
-
-        data += 4
-        nlen -= 4
-
-    if nlen == 3:
-        h = h ^ (data[2] << 16)
-    if nlen >= 2:
-        h = h ^ (data[1] << 8)
-    if nlen >= 1:
-        h = h ^ (data[0])
-        h *= m
-
-    h = h ^ (h >> 13)
-    h *= m
-    h = h ^ (h >> 15)
-    return h
-
-
-def murmurhash(key, seed=None):
-    if key is None:
-        return
-
-    cdef:
-        bytes bkey = encode(key)
-        char *data
-        int iseed = seed or 0
-        Py_ssize_t nbytes
-
-    PyBytes_AsStringAndSize(bkey, &data, &nbytes)
-
-    if key:
-        return murmurhash2(<unsigned char *>data, <int64_t>nbytes, iseed)
-    return 0
-
-
 cdef double *get_weights(int ncol, tuple raw_weights):
     cdef:
         int argc = len(raw_weights)
@@ -1964,7 +2017,8 @@ def rank_lucene(py_match_info, *raw_weights):
     cdef:
         unsigned int *match_info
         bytes _match_info_buf = bytes(py_match_info)
-        char *match_info_buf = _match_info_buf
+        char *match_info_buf
+        Py_ssize_t buf_size
         int nphrase, ncol
         double total_docs, term_frequency
         double doc_length, docs_with_term, avg_length
@@ -1973,6 +2027,10 @@ def rank_lucene(py_match_info, *raw_weights):
         int P_O = 0, C_O = 1, N_O = 2, L_O, X_O
         int iphrase, icol, x
         double score = 0.0
+
+    PyBytes_AsStringAndSize(_match_info_buf, &match_info_buf, &buf_size)
+    if buf_size < <Py_ssize_t>(sizeof(unsigned int) * 3):
+        raise ValueError('match_info buffer too small')
 
     match_info = <unsigned int *>match_info_buf
     nphrase = match_info[P_O]
@@ -2007,7 +2065,8 @@ def rank_bm25(py_match_info, *raw_weights):
     cdef:
         unsigned int *match_info
         bytes _match_info_buf = bytes(py_match_info)
-        char *match_info_buf = _match_info_buf
+        char *match_info_buf
+        Py_ssize_t buf_size
         int nphrase, ncol
         double B = 0.75, K = 1.2
         double total_docs, term_frequency
@@ -2017,6 +2076,10 @@ def rank_bm25(py_match_info, *raw_weights):
         int P_O = 0, C_O = 1, N_O = 2, A_O = 3, L_O, X_O
         int iphrase, icol, x
         double score = 0.0
+
+    PyBytes_AsStringAndSize(_match_info_buf, &match_info_buf, &buf_size)
+    if buf_size < <Py_ssize_t>(sizeof(unsigned int) * 3):
+        raise ValueError('match_info buffer too small')
 
     match_info = <unsigned int *>match_info_buf
     # PCNALX = matchinfo format.
@@ -2214,3 +2277,34 @@ cdef int _aggressive_busy_handler(void *ptr, int n) noexcept nogil:
         sqlite3_sleep(current)
         return 1
     return 0
+
+
+SQLITE_OK = SQLITE_OK
+SQLITE_ERROR = SQLITE_ERROR
+SQLITE_INTERNAL = SQLITE_INTERNAL
+SQLITE_PERM = SQLITE_PERM
+SQLITE_ABORT = SQLITE_ABORT
+SQLITE_BUSY = SQLITE_BUSY
+SQLITE_LOCKED = SQLITE_LOCKED
+SQLITE_NOMEM = SQLITE_NOMEM
+SQLITE_READONLY = SQLITE_READONLY
+SQLITE_INTERRUPT = SQLITE_INTERRUPT
+SQLITE_IOERR = SQLITE_IOERR
+SQLITE_CORRUPT = SQLITE_CORRUPT
+SQLITE_NOTFOUND = SQLITE_NOTFOUND
+SQLITE_FULL = SQLITE_FULL
+SQLITE_CANTOPEN = SQLITE_CANTOPEN
+SQLITE_PROTOCOL = SQLITE_PROTOCOL
+SQLITE_EMPTY = SQLITE_EMPTY
+SQLITE_SCHEMA = SQLITE_SCHEMA
+SQLITE_TOOBIG = SQLITE_TOOBIG
+SQLITE_CONSTRAINT = SQLITE_CONSTRAINT
+SQLITE_MISMATCH = SQLITE_MISMATCH
+SQLITE_MISUSE = SQLITE_MISUSE
+SQLITE_NOLFS = SQLITE_NOLFS
+SQLITE_AUTH = SQLITE_AUTH
+SQLITE_FORMAT = SQLITE_FORMAT
+SQLITE_RANGE = SQLITE_RANGE
+SQLITE_NOTADB = SQLITE_NOTADB
+SQLITE_ROW = SQLITE_ROW
+SQLITE_DONE = SQLITE_DONE

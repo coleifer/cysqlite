@@ -257,7 +257,7 @@ class TestQueryExecution(BaseTestCase):
         self.assertFalse(self.db.autocommit())
         try:
             self.db.commit()
-        except OperationalError as exc:
+        except IntegrityError as exc:
             pass
 
         # Transaction is closed.
@@ -274,6 +274,9 @@ class TestQueryExecution(BaseTestCase):
         with self.db.atomic():
             self.db.execute('delete from kv')
         self.assertCount(0)
+
+        self.assertTrue(self.db.autocommit())
+        self.db.commit_hook(None)
 
     def assertCount(self, n):
         curs = self.db.execute('select count(*) from kv')
@@ -872,26 +875,6 @@ class TestRankUDFs(BaseTestCase):
         self.assertSearch('faith', [
             (2, 0.036), (5, 0.042), (1, 0.047), (3, 0.049), (4, 0.049)],
             'rank_lucene')
-
-
-class TestMurmurHashUDF(BaseTestCase):
-    filename = ':memory:'
-
-    def setUp(self):
-        super(TestMurmurHashUDF, self).setUp()
-        self.db.create_function(murmurhash, 'murmurhash')
-
-    def assertHash(self, s, expected):
-        cursor = self.db.execute('select murmurhash(?)', (s,))
-        result, = [hsh for hsh, in cursor]
-        self.assertEqual(result, expected)
-
-    def test_murmur_hash(self):
-        self.assertHash('testkey', 2871421366)
-        self.assertHash('murmur', 3883399899)
-        self.assertHash('', 0)
-        self.assertHash('this is a test of a longer string', 2569735385)
-        self.assertHash(None, None)
 
 
 class TestStringDistanceUDFs(BaseTestCase):

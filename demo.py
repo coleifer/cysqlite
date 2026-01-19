@@ -1,4 +1,5 @@
 import os
+import threading
 
 from cysqlite import *
 
@@ -193,3 +194,34 @@ pd()
 
 print(sqlite_version)
 print(sqlite_version_info)
+
+def work_thread(db_file):
+    conn = Connection(db_file)
+    conn.connect()
+    print(conn.execute('pragma journal_mode').fetchall())
+    assert conn.autocommit()
+    for i in range(0, 1000, 10):
+        with conn.atomic():
+            data = tuple('i%03d' % j for j in range(i, i + 10))
+            params = ', '.join(['(?)'] * 10)
+            conn.execute('insert into data (val) values %s' % params, data)
+
+    for i in range(1000):
+        list(conn.execute('select * from data'))
+
+filename = '/tmp/testing.db'
+conn = Connection(filename)
+conn.connect()
+res = conn.execute('pragma journal_mode=\'wal\'')
+print(res.fetchall())
+
+conn.execute('drop table if exists "data"')
+conn.execute('create table "data" ('
+             'id integer not null primary key, '
+             'val text not null)')
+print(conn.execute_one('pragma journal_mode'))
+conn.close()
+
+threads = [threading.Thread(target=work_thread, args=(filename,)) for i in range(8)]
+for t in threads: t.start()
+for t in threads: t.join()
