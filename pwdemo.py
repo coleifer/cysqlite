@@ -19,22 +19,6 @@ class CySqliteDatabase(SqliteDatabase):
             raise
         return conn
 
-    def _add_conn_hooks(self, conn):
-        if self._attached:
-            self._attach_databases(conn)
-        if self._pragmas:
-            self._set_pragmas(conn)
-        self._load_aggregates(conn)
-        self._load_collations(conn)
-        self._load_functions(conn)
-        if self.server_version >= (3, 25, 0):
-            self._load_window_functions(conn)
-        if self._table_functions:
-            for table_function in self._table_functions:
-                table_function.register(conn)
-        if self._extensions:
-            self._load_extensions(conn)
-
     def _set_pragmas(self, conn):
         for pragma, value in self._pragmas:
             conn.execute_one('PRAGMA %s = %s;' % (pragma, value))
@@ -73,20 +57,6 @@ class CySqliteDatabase(SqliteDatabase):
     def _load_window_functions(self, conn):
         for name, (klass, num_params) in self._window_functions.items():
             conn.create_window_function(klass, name, num_params)
-
-    def _load_extensions(self, conn):
-        conn.enable_load_extensions(True)
-        for extension in self._extensions:
-            conn.load_extension(extension)
-
-    def load_extension(self, extension):
-        self._extensions.add(extension)
-        if not self.is_closed():
-            conn = self.connection()
-            conn.load_extension(extension)
-
-    def unload_extension(self, extension):
-        self._extensions.remove(extension)
 
     def last_insert_id(self, cursor, query_type=None):
         return self.connection().last_insert_rowid()
