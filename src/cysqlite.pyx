@@ -1864,8 +1864,11 @@ class TableFunction(object):
 
         return ', '.join(accum)
 
+
 sqlite_version = decode(sqlite3_version)
-sqlite_version_info = sqlite3_libversion_number()
+sqlite_version_info = tuple(int(i) if i.isdigit() else i
+                            for i in sqlite_version.split('.'))
+
 
 def connect(database, flags=None, timeout=5000, vfs=None, uri=False,
             extensions=True, cached_statements=100, check_same_thread=True,
