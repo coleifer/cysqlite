@@ -126,6 +126,16 @@ with db.atomic() as tx:
         except ValueError:
             pass
 
+with db.atomic() as tx:
+    u3 = User.create(username='u3')
+    u4 = User.create(username='u4')
+    tx.rollback()
+    try:
+        Tweet.create(user=u3, content='u2-1')
+    except IntegrityError:
+        pass
+    Tweet.create(user=u2, content='u2-1')
+
 query = User.select().order_by(User.username)
 assert [u.username for u in query] == ['u1', 'u2']
 
@@ -153,8 +163,12 @@ class Series(TableFunction):
         self.curr += self.step
         return (ret,)
 
+logger.setLevel(logging.INFO)
+
 for i in range(10):
     db.close()
     db.connect()
     accum = [row[0] for row in db.execute_sql('select * from series(1, 10)')]
     assert accum == list(range(1, 11))
+
+#db.create_tables([User, Tweet])
