@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools", "wheel", "cython"]
+
+[project]
+name = "cysqlite"
+version = "0.1.0"
+description = "bindings for sqlite3"
+readme = "README.md"
+authors = [
+    { name = "Charles Leifer", email = "coleifer@gmail.com" }
+]
+classifiers = [
+    "Programming Language :: Python :: 2",
+    "Programming Language :: Python :: 3",
+    "Topic :: Database :: Database Engines/Servers",
+    "Topic :: Software Development :: Embedded Systems",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Homepage = "https://github.com/coleifer/cysqlite"
+Repository = "https://github.com/coleifer/cysqlite"
+
+[tool.setuptools]
+# Include package data
+zip-safe = false
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cysqlite*"]
+
+[tool.setuptools.package-data]
+cysqlite = ["*.pxd", "*.pxi", "*.c"]

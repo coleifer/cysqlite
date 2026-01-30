@@ -1,0 +1,7 @@
+include README.md
+include LICENSE
+include pyproject.toml
+include tests.py
+recursive-include src *
+
+global-exclude *.o
