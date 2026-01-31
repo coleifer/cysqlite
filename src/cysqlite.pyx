@@ -76,8 +76,6 @@ cdef class Transaction(object)
 cdef class Savepoint(object)
 cdef class Blob(object)
 
-# TODO:
-# - introspection.
 
 cdef raise_sqlite_error(sqlite3 *db, unicode msg):
     cdef int code = sqlite3_errcode(db)
@@ -155,7 +153,7 @@ cdef class Connection(_callable_context_manager):
 
     def __init__(self, database, flags=None, timeout=5.0, vfs=None, uri=False,
                  extensions=True, cached_statements=100,
-                 check_same_thread=True):
+                 check_same_thread=True, autoconnect=False):
         self.database = decode(database)
         self.flags = flags or 0
         self.timeout = timeout
@@ -171,6 +169,9 @@ cdef class Connection(_callable_context_manager):
         self.stmt_available = {}
         self.stmt_in_use = weakref.WeakValueDictionary()
         self._transaction_depth = 0
+
+        if autoconnect:
+            self.connect()
 
     def __dealloc__(self):
         if self.db and sqlite3_close_v2(self.db) == SQLITE_OK:
@@ -241,7 +242,9 @@ cdef class Connection(_callable_context_manager):
         if self.uri or bdatabase.find(b'://') >= 0:
             flags |= SQLITE_OPEN_URI
 
-        rc = sqlite3_open_v2(zdatabase, &self.db, flags, zvfs)
+        with nogil:
+            rc = sqlite3_open_v2(zdatabase, &self.db, flags, zvfs)
+
         if rc != SQLITE_OK:
             self.db = NULL
             raise SqliteError('error opening database: %s.' % rc)
@@ -905,8 +908,10 @@ cdef class Statement(object):
                                          <sqlite3_uint64>nbytes,
                                          SQLITE_TRANSIENT)
             else:
-                if isinstance(param, (datetime.datetime, datetime.date)):
-                    param = str(param)
+                if isinstance(param, datetime.datetime):
+                    param = param.isoformat(' ')
+                elif isinstance(param, datetime.date):
+                    param = param.isoformat()
                 else:
                     param = str(param)
                 tmp = PyUnicode_AsUTF8String(param)
@@ -1979,17 +1984,17 @@ sqlite_version_info = tuple(int(i) if i.isdigit() else i
 
 def connect(database, flags=None, timeout=5.0, vfs=None, uri=False,
             extensions=True, cached_statements=100, check_same_thread=True,
-            factory=None):
+            autoconnect=True):
     """Open a connection to an SQLite database."""
-    factory = factory or Connection
-    conn = factory(database,
-                   flags=flags,
-                   timeout=timeout,
-                   vfs=vfs,
-                   uri=uri,
-                   extensions=extensions,
-                   cached_statements=cached_statements,
-                   check_same_thread=check_same_thread)
+    conn = Connection(database,
+                      flags=flags,
+                      timeout=timeout,
+                      vfs=vfs,
+                      uri=uri,
+                      extensions=extensions,
+                      cached_statements=cached_statements,
+                      check_same_thread=check_same_thread,
+                      autoconnect=autoconnect)
     return conn
 
 
