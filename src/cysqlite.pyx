@@ -859,6 +859,9 @@ cdef class Statement(object):
                                     &(self.st), &tail)
 
         if rc != SQLITE_OK:
+            if self.st:
+                sqlite3_finalize(self.st)
+                self.st = NULL
             raise_sqlite_error(self.conn.db, 'error compiling statement: ')
         if self._check_tail(tail):
             raise ProgrammingError('Can only execute one query at a time.')

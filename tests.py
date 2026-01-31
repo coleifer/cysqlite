@@ -551,6 +551,10 @@ class TestStatementUsage(BaseTestCase):
 
         self.assertEqual(list(self.db.execute('select 1; ')), [(1,)])
 
+    def test_broken_sql(self):
+        self.assertRaises(OperationalError, self.db.execute, 'select')
+        self.assertRaises(OperationalError, self.db.execute, 'bad query')
+
 
 class TestBlob(BaseTestCase):
     def setUp(self):
