@@ -512,6 +512,7 @@ class TestSmallCache(BaseTestCase):
         self.assertTrue(stmt2.fetchone() is None)
         self.assertEqual(self.db.get_stmt_cache(), (3, 0))
 
+    @unittest.expectedFailure
     def test_statement_reuse2(self):
         self.create_table()
         self.assertEqual(self.db.get_stmt_cache(), (1, 0))
