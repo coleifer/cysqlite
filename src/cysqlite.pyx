@@ -121,6 +121,18 @@ cdef inline int check_thread(Connection conn) except -1:
             'same thread')
 
 
+ColumnMetadata = namedtuple('ColumnMetadata', (
+    'table', 'column', 'datatype', 'collation', 'not_null', 'primary_key',
+    'auto_increment'))
+Index = namedtuple('Index', ('name', 'sql', 'columns', 'unique', 'table'))
+Column = namedtuple('Column', ('name', 'data_type', 'null', 'primary_key',
+                               'table', 'default'))
+ForeignKey = namedtuple('ForeignKey', ('column', 'dest_table', 'dest_column',
+                                       'table'))
+View = namedtuple('View', ('name', 'sql'))
+SENTINEL = object()
+
+
 cdef class Connection(_callable_context_manager):
     cdef:
         sqlite3 *db
@@ -364,6 +376,75 @@ cdef class Connection(_callable_context_manager):
             raise_sqlite_error(self.db, 'error requesting db status: ')
         return (current, highwater)
 
+    def pragma(self, key, value=SENTINEL, database=None):
+        if database is not None:
+            key = '"%s".%s' % (database, key)
+        sql = 'PRAGMA %s' % key
+        if value is not SENTINEL:
+            sql += ' = %s' % (value or 0)
+        row = self.execute_one(sql)
+        if row:
+            return row[0]
+
+    def get_tables(self, database=None):
+        database = database or 'main'
+        stmt = self.execute('SELECT name FROM "%s".sqlite_master WHERE '
+                            'type=? ORDER BY name' % database, ('table',))
+        return [row for row, in stmt]
+
+    def get_views(self, database=None):
+        sql = ('SELECT name, sql FROM "%s".sqlite_master WHERE type=? '
+               'ORDER BY name') % (database or 'main')
+        return [View(*row) for row in self.execute(sql, ('view',))]
+
+    def get_indexes(self, table, database=None):
+        database = database or 'main'
+        query = ('SELECT name, sql FROM "%s".sqlite_master '
+                 'WHERE tbl_name = ? AND type = ? ORDER BY name') % database
+        stmt = self.execute(query, (table, 'index'))
+        index_to_sql = dict(stmt)
+
+        # Determine which indexes have a unique constraint.
+        unique_indexes = set()
+        stmt = self.execute('PRAGMA "%s".index_list("%s")' % (database, table))
+        for row in stmt:
+            name = row[1]
+            is_unique = int(row[2]) == 1
+            if is_unique:
+                unique_indexes.add(name)
+
+        # Retrieve the indexed columns.
+        index_columns = {}
+        for index_name in sorted(index_to_sql):
+            stmt = self.execute('PRAGMA "%s".index_info("%s")' %
+                                (database, index_name))
+            index_columns[index_name] = [row[2] for row in stmt]
+
+        return [
+            Index(
+                name,
+                index_to_sql[name],
+                index_columns[name],
+                name in unique_indexes,
+                table)
+            for name in sorted(index_to_sql)]
+
+    def get_columns(self, table, database=None):
+        stmt = self.execute('PRAGMA "%s".table_info("%s")' %
+                            (database or 'main', table))
+        return [Column(r[1], r[2], not r[3], bool(r[5]), table, r[4])
+                for r in stmt]
+
+    def get_primary_keys(self, table, database=None):
+        stmt = self.execute('PRAGMA "%s".table_info("%s")' %
+                            (database or 'main', table))
+        return [row[1] for row in filter(lambda r: r[-1], stmt)]
+
+    def get_foreign_keys(self, table, database=None):
+        stmt = self.execute('PRAGMA "%s".foreign_key_list("%s")' %
+                            (database or 'main', table))
+        return [ForeignKey(row[3], row[2], row[4], table) for row in stmt]
+
     def table_column_metadata(self, table, column, database=None):
         check_connection(self)
         cdef:
@@ -388,8 +469,14 @@ cdef class Connection(_callable_context_manager):
         if rc != SQLITE_OK:
             raise_sqlite_error(self.db, 'error getting column metadata: ')
 
-        return (table, column, decode(data_type), decode(coll_seq), not_null,
-                primary_key, auto_increment)
+        return ColumnMetadata(
+            table,
+            column,
+            decode(data_type),
+            decode(coll_seq),
+            bool(not_null),
+            bool(primary_key),
+            bool(auto_increment))
 
     def transaction(self, lock=None):
         check_connection(self)
@@ -692,13 +779,13 @@ cdef class Connection(_callable_context_manager):
         if rc != SQLITE_OK:
             raise_sqlite_error(self.db, 'error setting config value: ')
         return status
-    def set_foreign_keys(self, int enabled):
+    def set_foreign_keys_enabled(self, int enabled):
         return self._do_config(SQLITE_DBCONFIG_ENABLE_FKEY, enabled)
-    def get_foreign_keys(self):
+    def get_foreign_keys_enabled(self):
         return self._do_config(SQLITE_DBCONFIG_ENABLE_FKEY, -1)
-    def set_triggers(self, int enabled):
+    def set_triggers_enabled(self, int enabled):
         return self._do_config(SQLITE_DBCONFIG_ENABLE_TRIGGER, enabled)
-    def get_triggers(self):
+    def get_triggers_enabled(self):
         return self._do_config(SQLITE_DBCONFIG_ENABLE_TRIGGER, -1)
     def set_load_extension(self, int enabled):
         return self._do_config(SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, enabled)
