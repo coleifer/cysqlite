@@ -398,14 +398,18 @@ class TestQueryExecution(BaseTestCase):
 
     def test_pragmas_settings(self):
         self.db.execute('pragma foreign_keys = 1')
-        self.assertEqual(self.db.get_foreign_keys(), 1)
+        self.assertEqual(self.db.get_foreign_keys_enabled(), 1)
         self.db.execute('pragma foreign_keys = 0')
-        self.assertEqual(self.db.get_foreign_keys(), 0)
+        self.assertEqual(self.db.get_foreign_keys_enabled(), 0)
 
-        self.db.set_foreign_keys(1)
-        self.assertEqual(self.db.get_foreign_keys(), 1)
-        self.db.set_foreign_keys(0)
-        self.assertEqual(self.db.get_foreign_keys(), 0)
+        self.db.set_foreign_keys_enabled(1)
+        self.assertEqual(self.db.get_foreign_keys_enabled(), 1)
+        self.db.set_foreign_keys_enabled(0)
+        self.assertEqual(self.db.get_foreign_keys_enabled(), 0)
+
+        for value in (1, 0, 1):
+            self.db.pragma('foreign_keys', value)
+            self.assertEqual(self.db.pragma('foreign_keys'), value)
 
     def test_table_column_metadata(self):
         self.assertEqual(self.db.table_column_metadata('kv', 'id'), (
