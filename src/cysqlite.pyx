@@ -848,6 +848,7 @@ cdef class Statement(object):
 
     cdef prepare_statement(self):
         cdef:
+            const char *tail
             char *zsql
             int rc
             Py_ssize_t nbytes
@@ -855,10 +856,21 @@ cdef class Statement(object):
         PyBytes_AsStringAndSize(self.sql, &zsql, &nbytes)
         with nogil:
             rc = sqlite3_prepare_v2(self.conn.db, zsql, <int>nbytes,
-                                    &(self.st), NULL)
+                                    &(self.st), &tail)
 
         if rc != SQLITE_OK:
             raise_sqlite_error(self.conn.db, 'error compiling statement: ')
+        if self._check_tail(tail):
+            raise ProgrammingError('Can only execute one query at a time.')
+
+    cdef _check_tail(self, const char *tail):
+        cdef const char* pos = tail
+        while pos[0] != 0:
+            if pos[0] == 32 or pos[0] == 9 or pos[0] == 10 or pos[0] == 13:
+                pass
+            else:
+                return 1
+            pos += 1
 
     cdef bind(self, tuple params):
         check_connection(self.conn)

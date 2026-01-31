@@ -545,6 +545,12 @@ class TestStatementUsage(BaseTestCase):
         self.db.connect()
         self.assertRaises(OperationalError, stmt.execute)
 
+    def test_statement_too_much(self):
+        with self.assertRaises(ProgrammingError):
+            stmt = self.db.execute('select 1; -- test')
+
+        self.assertEqual(list(self.db.execute('select 1; ')), [(1,)])
+
 
 class TestBlob(BaseTestCase):
     def setUp(self):
