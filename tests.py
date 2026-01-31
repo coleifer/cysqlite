@@ -530,6 +530,15 @@ class TestStatementUsage(BaseTestCase):
 
         self.assertEqual(self.db.get_stmt_usage(), 2)
 
+        stmt = self.db.execute('select "key" from kv where "key" != ? '
+                               'order by "key"', ('kx',))
+        self.assertEqual(next(stmt), ('k1',))
+        self.assertEqual(next(stmt), ('k2',))
+        self.assertRaises(StopIteration, lambda: next(stmt))
+
+        self.assertEqual(next(stmt.execute()), ('k1',))
+        self.assertEqual(next(stmt), ('k2',))
+
     def test_statement_after_close(self):
         stmt = self.db.execute('select 1')
         self.db.close()
