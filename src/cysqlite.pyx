@@ -164,15 +164,16 @@ cdef class Connection(_callable_context_manager):
             self.connect()
 
     def __dealloc__(self):
-        if self.db and sqlite3_close_v2(self.db) == SQLITE_OK:
-            self.db = NULL
+        if self.db:
+            sqlite3_close_v2(self.db)
 
-    cdef inline void enter_sqlite(self) except *:
+    cdef inline int enter_sqlite(self) except -1:
         if self.closed:
             raise OperationalError('Cannot operate on a closed database.')
         if self.in_sqlite:
             raise RuntimeError('SQLite reentrancy detected')
         self.in_sqlite = True
+        return 0
 
     cdef inline void leave_sqlite(self) noexcept:
         self.in_sqlite = False
