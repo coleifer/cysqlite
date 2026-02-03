@@ -1552,7 +1552,7 @@ cdef int _exec_callback(void *data, int argc, char **argv, char **colnames) noex
 cdef class Transaction(_callable_context_manager):
     cdef:
         Connection conn
-        bytes lock
+        str lock
 
     def __init__(self, Connection conn, lock=None):
         self.conn = conn
@@ -1629,7 +1629,7 @@ cdef class Savepoint(_callable_context_manager):
 cdef class Atomic(_callable_context_manager):
     cdef:
         Connection conn
-        bytes lock
+        str lock
         object txn
 
     def __init__(self, Connection conn, lock=None):

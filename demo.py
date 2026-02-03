@@ -207,6 +207,7 @@ def work_thread(db_file):
             params = ', '.join(['(?)'] * 10)
             conn.execute('insert into data (val) values %s' % params, data)
 
+    assert conn.autocommit()
     for i in range(100):
         list(conn.execute('select * from data'))
         sys.stdout.write('.')
