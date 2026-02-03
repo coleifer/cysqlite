@@ -85,9 +85,16 @@ cdef class Blob(object)
 
 
 cdef raise_sqlite_error(sqlite3 *db, unicode msg):
-    cdef int code = sqlite3_errcode(db)
-    cdef int ext = sqlite3_extended_errcode(db)
-    errmsg = decode(sqlite3_errmsg(db))
+    cdef:
+        int code = 0
+        int ext = 0
+
+    if db != NULL:
+        code = sqlite3_errcode(db)
+        ext = sqlite3_extended_errcode(db)
+        errmsg = decode(sqlite3_errmsg(db))
+    else:
+        errmsg = b'(db handle is NULL)'
 
     if code in (SQLITE_CONSTRAINT,):
         exc = IntegrityError
@@ -362,7 +369,7 @@ cdef class Cursor(object):
             self.abort()
             raise_sqlite_error(self.conn.db, 'error executing query: ')
 
-        if self.stmt.is_dml:
+        if self.stmt is not None and self.stmt.is_dml:
             self.rowcount = self.conn.changes()
             self.lastrowid = self.conn.last_insert_rowid()
 
@@ -372,9 +379,11 @@ cdef class Cursor(object):
         return self
 
     def __next__(self):
-        if self.stmt.st == NULL or self.conn.db == NULL:
-            self.stmt = None
+        if self.conn.db == NULL:
             raise OperationalError('Database was closed.')
+        elif self.stmt and self.stmt.st == NULL:
+            self.stmt = None
+            raise OperationalError('Statement was finalized.')
         elif not self.executing:
             raise StopIteration
 
@@ -553,16 +562,18 @@ cdef class Connection(_callable_context_manager):
         if self.extensions:
             rc = sqlite3_enable_load_extension(self.db, 1)
             if rc != SQLITE_OK:
+                errmsg = decode(sqlite3_errmsg(self.db))
                 sqlite3_close_v2(self.db)
                 self.db = NULL
-                raise_sqlite_error(self.db, 'error enabling extensions: ')
+                raise OperationalError('could not enable extensions: %s' % errmsg)
 
-        cdef int timeout = int(self.timeout * 1000)
-        rc = sqlite3_busy_timeout(self.db, timeout)
+        cdef int timeout_ms = int(self.timeout * 1000)
+        rc = sqlite3_busy_timeout(self.db, timeout_ms)
         if rc != SQLITE_OK:
+            errmsg = decode(sqlite3_errmsg(self.db))
             sqlite3_close_v2(self.db)
             self.db = NULL
-            raise_sqlite_error(self.db, 'error setting busy timeout: ')
+            raise OperationalError('error setting busy timeout: %s' % errmsg)
 
         return True
 
@@ -608,9 +619,12 @@ cdef class Connection(_callable_context_manager):
         # Remove oldest statement from the cache - relies on Python 3.6
         # dictionary retaining insertion order. For older python, will simply
         # remove a random key, which is also fine.
+        cdef Statement evicted
+
         while len(self.stmt_available) > self.cached_statements:
             first_key = next(iter(self.stmt_available))
-            st = self.stmt_available.pop(first_key)
+            evicted = self.stmt_available.pop(first_key)
+            evicted.finalize()
 
     def execute(self, sql, params=None):
         check_connection(self)
