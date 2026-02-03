@@ -3,12 +3,18 @@ from cpython.bytes cimport PyBytes_AS_STRING
 from cpython.bytes cimport PyBytes_AsString
 from cpython.bytes cimport PyBytes_AsStringAndSize
 from cpython.bytes cimport PyBytes_FromStringAndSize
+from cpython.buffer cimport PyBUF_CONTIG_RO
+from cpython.buffer cimport PyObject_CheckBuffer
+from cpython.buffer cimport PyObject_GetBuffer
+from cpython.float cimport PyFloat_FromDouble
+from cpython.long cimport PyLong_FromLongLong
 from cpython.object cimport PyObject
 from cpython.ref cimport Py_DECREF
 from cpython.ref cimport Py_INCREF
 from cpython.tuple cimport PyTuple_New
 from cpython.tuple cimport PyTuple_SET_ITEM
 from cpython.unicode cimport PyUnicode_AsUTF8String
+from cpython.unicode cimport PyUnicode_AsUTF8AndSize
 from cpython.unicode cimport PyUnicode_DecodeUTF8
 from libc.float cimport DBL_MAX
 from libc.limits cimport INT_MAX
@@ -124,6 +130,304 @@ ForeignKey = namedtuple('ForeignKey', ('column', 'dest_table', 'dest_column',
                                        'table'))
 View = namedtuple('View', ('name', 'sql'))
 SENTINEL = object()
+
+
+cdef class Statement(object):
+    cdef:
+        readonly Connection conn
+        sqlite3_stmt *st
+        bytes sql
+        object __weakref__  # Allow weak-references to be made.
+
+    def __cinit__(self, Connection conn, bytes sql):
+        self.conn = conn
+        self.sql = sql
+        self.st = NULL
+        self.prepare_statement()
+
+    def __dealloc__(self):
+        if self.st != NULL:
+            sqlite3_finalize(self.st)
+
+    cdef prepare_statement(self):
+        cdef:
+            const char *tail
+            char *zsql
+            int rc
+            Py_ssize_t nbytes
+
+        PyBytes_AsStringAndSize(self.sql, &zsql, &nbytes)
+        with nogil:
+            rc = sqlite3_prepare_v2(self.conn.db, zsql, <int>nbytes,
+                                    &(self.st), &tail)
+
+        if rc != SQLITE_OK:
+            if self.st:
+                sqlite3_finalize(self.st)
+                self.st = NULL
+            raise_sqlite_error(self.conn.db, 'error compiling statement: ')
+        if self._check_tail(tail):
+            raise ProgrammingError('Can only execute one query at a time.')
+
+    cdef _check_tail(self, const char *tail):
+        cdef const char* pos = tail
+        while pos[0] != 0:
+            # Ignore whitespace and semi-colon.
+            if pos[0] == 32 or pos[0] == 9 or pos[0] == 10 or pos[0] == 13 or \
+               pos[0] == 59:
+                pass
+            else:
+                return 1
+            pos += 1
+
+    cdef bind(self, tuple params):
+        cdef:
+            const char *buf
+            Py_ssize_t nbytes
+            Py_buffer view
+            int i = 1, rc = 0
+
+        pc = sqlite3_bind_parameter_count(self.st)
+        if pc != len(params):
+            raise SqliteError('error: %s parameters required' % pc)
+
+        # Note: sqlite3_bind_XXX uses 1-based indexes.
+        for i in range(pc):
+            param = params[i]
+
+            if param is None:
+                rc = sqlite3_bind_null(self.st, i + 1)
+            elif isinstance(param, int):
+                rc = sqlite3_bind_int64(self.st, i + 1, param)
+            elif isinstance(param, float):
+                rc = sqlite3_bind_double(self.st, i + 1, param)
+            elif isinstance(param, unicode):
+                buf = PyUnicode_AsUTF8AndSize(param, &nbytes)
+                if buf == NULL:
+                    raise UnicodeDecodeError('Invalid UTF8 in text data.')
+                rc = sqlite3_bind_text64(self.st, i + 1, buf,
+                                         <sqlite3_uint64>nbytes,
+                                         SQLITE_TRANSIENT,
+                                         SQLITE_UTF8)
+            elif PyObject_CheckBuffer(param):
+                if PyObject_GetBuffer(param, &view, PyBUF_CONTIG_RO):
+                    raise TypeError('Object does not support readable buffer.')
+                rc = sqlite3_bind_blob64(self.st, i + 1, view.buf,
+                                         <sqlite3_uint64>(view.len),
+                                         SQLITE_TRANSIENT)
+            else:
+                if isinstance(param, datetime.datetime):
+                    param = param.isoformat(' ')
+                elif isinstance(param, datetime.date):
+                    param = param.isoformat()
+                else:
+                    param = str(param)
+                buf = PyUnicode_AsUTF8AndSize(param, &nbytes)
+                if buf == NULL:
+                    raise UnicodeDecodeError('Invalid UTF8 in text data.')
+                rc = sqlite3_bind_text64(self.st, i + 1, buf,
+                                         <sqlite3_uint64>nbytes,
+                                         SQLITE_TRANSIENT,
+                                         SQLITE_UTF8)
+
+            if rc != SQLITE_OK:
+                raise_sqlite_error(self.conn.db, 'error binding parameter: ')
+
+    cdef int step(self) except *:
+        cdef int rc
+        self.conn.enter_sqlite()
+        try:
+            with nogil:
+                rc = sqlite3_step(self.st)
+        finally:
+            self.conn.leave_sqlite()
+        return rc
+
+    cdef void reset(self) noexcept:
+        if self.st != NULL:
+            sqlite3_reset(self.st)
+            sqlite3_clear_bindings(self.st)
+
+    cdef void finalize(self) noexcept:
+        if self.st != NULL:
+            sqlite3_finalize(self.st)
+            self.st = NULL
+
+    cdef get_row_data(self):
+        cdef:
+            int i, ncols = sqlite3_data_count(self.st)
+            tuple result = PyTuple_New(ncols)
+            object value
+
+        for i in range(ncols):
+            coltype = sqlite3_column_type(self.st, i)
+            if coltype == SQLITE_NULL:
+                value = None
+            elif coltype == SQLITE_INTEGER:
+                value = PyLong_FromLongLong(sqlite3_column_int64(self.st, i))
+            elif coltype == SQLITE_FLOAT:
+                value = PyFloat_FromDouble(sqlite3_column_double(self.st, i))
+            elif coltype == SQLITE_TEXT:
+                nbytes = sqlite3_column_bytes(self.st, i)
+                value = PyUnicode_DecodeUTF8(
+                    <char *>sqlite3_column_text(self.st, i),
+                    nbytes,
+                    NULL)
+            elif coltype == SQLITE_BLOB:
+                nbytes = sqlite3_column_bytes(self.st, i)
+                value = PyBytes_FromStringAndSize(
+                    <char *>sqlite3_column_blob(self.st, i),
+                    nbytes)
+            else:
+                raise SqliteError('error: cannot bind parameter %d: type = %r'
+                                  % (i, coltype))
+
+            # If we were in C we wouldn't need to do this, but Cython sees that
+            # we are losing the reference to the object while looping and
+            # automatically decrefs it, e.g.:
+            # __Pyx_GOTREF(__pyx_t_1);
+            # PyTuple_SET_ITEM(__pyx_v_result, __pyx_v_i, __pyx_t_1);
+            # __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
+            Py_INCREF(value)
+
+            PyTuple_SET_ITEM(result, i, value)
+
+        return result
+
+    cdef column_count(self):
+        return sqlite3_column_count(self.st)
+
+    cdef columns(self):
+        cdef:
+            bytes col_name
+            int col_count, i
+            list accum = []
+
+        col_count = sqlite3_column_count(self.st)
+        for i in range(col_count):
+            col_name = sqlite3_column_name(self.st, i)
+            accum.append(decode(col_name))
+        return accum
+
+
+cdef class Cursor(object):
+    cdef:
+        readonly Connection conn
+        Statement stmt
+        bint executing
+        bint done
+        int step_status
+        tuple _description
+
+    def __cinit__(self, Connection conn):
+        self.conn = conn
+        self.stmt = None
+        self.executing = False
+        self.done = False
+        self._description = None
+
+    def execute(self, sql, params=None):
+        if self.executing:
+            # TODO: reset?
+            raise OperationalError('Cursor already executing.')
+        self.stmt = self.conn.stmt_get(sql)
+        if params:
+            if not isinstance(params, tuple):
+                params = tuple(params)
+            self.stmt.bind(params)
+
+        self.step_status = self.stmt.step()
+        if self.step_status == SQLITE_ROW:
+            self.executing = True
+            self.done = False
+            self.description
+        elif self.step_status == SQLITE_DONE:
+            self.description
+            self.finish()
+        else:
+            self.abort()
+            raise_sqlite_error(self.conn.db, 'error executing query: ')
+
+        return self
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if not self.executing:
+            raise StopIteration
+        elif self.stmt.st == NULL:
+            raise OperationalError('Database was closed.')
+
+        row = None
+
+        if self.step_status == SQLITE_ROW:
+            row = self.stmt.get_row_data()
+            self.step_status = self.stmt.step()
+        elif self.step_status == SQLITE_DONE:
+            self.finish()
+            raise StopIteration
+        else:
+            self.abort()
+            raise_sqlite_error(self.conn.db, 'error executing query: ')
+        return row
+
+    cdef finish(self):
+        if self.stmt is not None:
+            self.stmt.reset()
+            self.conn.stmt_release(self.stmt)
+            self.stmt = None
+
+        self.executing = False
+        self.done = True
+
+    cdef abort(self):
+        if self.stmt is not None:
+            self.stmt.reset()
+            self.stmt = None
+
+        self.executing = False
+
+    def close(self):
+        self.finish()
+
+    def fetchone(self):
+        try:
+            return next(self)
+        except StopIteration:
+            return
+
+    def fetchall(self):
+        return list(self)
+
+    def value(self):
+        try:
+            return next(self)[0]
+        except StopIteration:
+            pass
+        finally:
+            self.finish()
+
+    def column_count(self):
+        return sqlite3_column_count(self.stmt.st)
+
+    def columns(self):
+        cdef:
+            bytes col_name
+            int col_count, i
+            list accum = []
+
+        col_count = sqlite3_column_count(self.stmt.st)
+        for i in range(col_count):
+            col_name = sqlite3_column_name(self.stmt.st, i)
+            accum.append(decode(col_name))
+        return accum
+
+    @property
+    def description(self):
+        if self._description is None:
+            self._description = tuple([(name,) for name in self.columns()])
+        return self._description
 
 
 cdef class Connection(_callable_context_manager):
@@ -314,8 +618,6 @@ cdef class Connection(_callable_context_manager):
         return st
 
     cdef stmt_release(self, Statement st):
-        if st.active:
-            raise RuntimeError('Cannot release active statement.')
         if st.st == NULL:
             raise Exception('Cannot release finalized statement.')
         self.stmt_in_use.pop(id(st), None)
@@ -862,306 +1164,6 @@ cdef class Connection(_callable_context_manager):
             raise_sqlite_error(self.db, 'error performing checkpoint: ')
 
         return (pnLog, pnCkpt)
-
-
-cdef class Statement(object):
-    cdef:
-        readonly Connection conn
-        sqlite3_stmt *st
-        bint active
-        bytes sql
-        object __weakref__
-
-    def __cinit__(self, Connection conn, sql):
-        self.conn = conn
-        self.sql = encode(sql)
-        self.st = NULL
-
-        self.conn.enter_sqlite()
-        try:
-            self.prepare_statement()
-        finally:
-            self.conn.leave_sqlite()
-
-    def __dealloc__(self):
-        if self.st != NULL:
-            sqlite3_finalize(self.st)
-
-    cdef prepare_statement(self):
-        cdef:
-            const char *tail
-            char *zsql
-            int rc
-            Py_ssize_t nbytes
-
-        PyBytes_AsStringAndSize(self.sql, &zsql, &nbytes)
-        with nogil:
-            rc = sqlite3_prepare_v2(self.conn.db, zsql, <int>nbytes,
-                                    &(self.st), &tail)
-
-        if rc != SQLITE_OK:
-            if self.st:
-                sqlite3_finalize(self.st)
-                self.st = NULL
-            raise_sqlite_error(self.conn.db, 'error compiling statement: ')
-        if self._check_tail(tail):
-            raise ProgrammingError('Can only execute one query at a time.')
-
-    cdef _check_tail(self, const char *tail):
-        cdef const char* pos = tail
-        while pos[0] != 0:
-            # Ignore whitespace and semi-colon.
-            if pos[0] == 32 or pos[0] == 9 or pos[0] == 10 or pos[0] == 13 or \
-               pos[0] == 59:
-                pass
-            else:
-                return 1
-            pos += 1
-
-    cdef bind(self, tuple params):
-        cdef:
-            bytes tmp
-            char *buf
-            int i = 1, rc = 0
-            Py_ssize_t nbytes
-
-        # Clear any existing bindings.
-        sqlite3_clear_bindings(self.st)
-
-        pc = sqlite3_bind_parameter_count(self.st)
-        if pc != len(params):
-            raise SqliteError('error: %s parameters required' % pc)
-
-        # Note: sqlite3_bind_XXX uses 1-based indexes.
-        for i in range(pc):
-            param = params[i]
-
-            if param is None:
-                rc = sqlite3_bind_null(self.st, i + 1)
-            elif isinstance(param, int):
-                rc = sqlite3_bind_int64(self.st, i + 1, param)
-            elif isinstance(param, float):
-                rc = sqlite3_bind_double(self.st, i + 1, param)
-            elif isinstance(param, unicode):
-                tmp = PyUnicode_AsUTF8String(param)
-                PyBytes_AsStringAndSize(tmp, &buf, &nbytes)
-                rc = sqlite3_bind_text64(self.st, i + 1, buf,
-                                         <sqlite3_uint64>nbytes,
-                                         SQLITE_TRANSIENT,
-                                         SQLITE_UTF8)
-            elif isinstance(param, (bytes, bytearray, memoryview)):
-                if isinstance(param, (bytearray, memoryview)):
-                    param = bytes(param)
-                PyBytes_AsStringAndSize(<bytes>param, &buf, &nbytes)
-                rc = sqlite3_bind_blob64(self.st, i + 1, <void *>buf,
-                                         <sqlite3_uint64>nbytes,
-                                         SQLITE_TRANSIENT)
-            else:
-                if isinstance(param, datetime.datetime):
-                    param = param.isoformat(' ')
-                elif isinstance(param, datetime.date):
-                    param = param.isoformat()
-                else:
-                    param = str(param)
-                tmp = PyUnicode_AsUTF8String(param)
-                PyBytes_AsStringAndSize(tmp, &buf, &nbytes)
-                rc = sqlite3_bind_text64(self.st, i + 1, buf,
-                                         <sqlite3_uint64>nbytes,
-                                         SQLITE_TRANSIENT,
-                                         SQLITE_UTF8)
-
-            if rc != SQLITE_OK:
-                raise_sqlite_error(self.conn.db, 'error binding parameter: ')
-
-    cdef int step(self) except *:
-        cdef int rc
-        self.conn.enter_sqlite()
-        try:
-            with nogil:
-                rc = sqlite3_step(self.st)
-        finally:
-            self.conn.leave_sqlite()
-        return rc
-
-    cdef void reset(self) noexcept:
-        if self.st != NULL:
-            sqlite3_reset(self.st)
-            sqlite3_clear_bindings(self.st)
-        self.active = False
-
-    cdef void finalize(self) noexcept:
-        if self.st != NULL:
-            sqlite3_finalize(self.st)
-            self.st = NULL
-
-    cdef get_row_data(self):
-        cdef:
-            int i, ncols = sqlite3_data_count(self.st)
-            tuple result = PyTuple_New(ncols)
-
-        for i in range(ncols):
-            coltype = sqlite3_column_type(self.st, i)
-            if coltype == SQLITE_NULL:
-                value = None
-            elif coltype == SQLITE_INTEGER:
-                value = sqlite3_column_int64(self.st, i)
-            elif coltype == SQLITE_FLOAT:
-                value = sqlite3_column_double(self.st, i)
-            elif coltype == SQLITE_TEXT:
-                nbytes = sqlite3_column_bytes(self.st, i)
-                value = PyUnicode_DecodeUTF8(
-                    <char *>sqlite3_column_text(self.st, i),
-                    nbytes,
-                    "replace")
-            elif coltype == SQLITE_BLOB:
-                nbytes = sqlite3_column_bytes(self.st, i)
-                value = PyBytes_FromStringAndSize(
-                    <char *>sqlite3_column_blob(self.st, i),
-                    nbytes)
-            else:
-                raise SqliteError('error: cannot bind parameter %d: type = %r'
-                                  % (i, coltype))
-
-            Py_INCREF(value)
-            PyTuple_SET_ITEM(result, i, value)
-
-        return result
-
-    cdef column_count(self):
-        return sqlite3_column_count(self.st)
-
-    cdef columns(self):
-        cdef:
-            bytes col_name
-            int col_count, i
-            list accum = []
-
-        col_count = sqlite3_column_count(self.st)
-        for i in range(col_count):
-            col_name = sqlite3_column_name(self.st, i)
-            accum.append(decode(col_name))
-        return accum
-
-
-cdef class Cursor(object):
-    cdef:
-        readonly Connection conn
-        Statement stmt
-        bint executing
-        bint done
-        int step_status
-        tuple _description
-
-    def __cinit__(self, Connection conn):
-        self.conn = conn
-        self.stmt = None
-        self.executing = False
-        self.done = False
-        self._description = None
-
-    def execute(self, sql, params=None):
-        if self.executing:
-            # TODO: reset?
-            raise OperationalError('Cursor already executing.')
-        self.stmt = self.conn.stmt_get(sql)
-        if params:
-            if not isinstance(params, tuple):
-                params = tuple(params)
-            self.stmt.bind(params)
-
-        self.step_status = self.stmt.step()
-        if self.step_status == SQLITE_ROW:
-            self.executing = True
-            self.done = False
-            self.stmt.active = True
-            self.description
-        elif self.step_status == SQLITE_DONE:
-            self.description
-            self.finish()
-        else:
-            self.abort()
-            raise_sqlite_error(self.conn.db, 'error executing query: ')
-
-        return self
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        if not self.executing:
-            raise StopIteration
-        elif self.stmt.st == NULL:
-            raise OperationalError('Database was closed.')
-
-        row = None
-
-        if self.step_status == SQLITE_ROW:
-            row = self.stmt.get_row_data()
-            self.step_status = self.stmt.step()
-        elif self.step_status == SQLITE_DONE:
-            self.finish()
-            raise StopIteration
-        else:
-            self.abort()
-            raise_sqlite_error(self.conn.db, 'error executing query: ')
-        return row
-
-    cdef finish(self):
-        if self.stmt is not None:
-            self.stmt.reset()
-            self.conn.stmt_release(self.stmt)
-            self.stmt = None
-
-        self.executing = False
-        self.done = True
-
-    cdef abort(self):
-        if self.stmt is not None:
-            self.stmt.reset()
-            self.stmt = None
-
-        self.executing = False
-
-    def close(self):
-        self.finish()
-
-    def fetchone(self):
-        try:
-            return next(self)
-        except StopIteration:
-            return
-
-    def fetchall(self):
-        return list(self)
-
-    def value(self):
-        try:
-            return next(self)[0]
-        except StopIteration:
-            pass
-        finally:
-            self.finish()
-
-    def column_count(self):
-        return sqlite3_column_count(self.stmt.st)
-
-    def columns(self):
-        cdef:
-            bytes col_name
-            int col_count, i
-            list accum = []
-
-        col_count = sqlite3_column_count(self.stmt.st)
-        for i in range(col_count):
-            col_name = sqlite3_column_name(self.stmt.st, i)
-            accum.append(decode(col_name))
-        return accum
-
-    @property
-    def description(self):
-        if self._description is None:
-            self._description = tuple([(name,) for name in self.columns()])
-        return self._description
 
 
 cdef class _Callback(object):

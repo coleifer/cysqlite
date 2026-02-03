@@ -44,6 +44,8 @@ else:
     define_macros = []
 
 compile_args = ['-O3', '-Wall'] if sys.platform != 'win32' else ['/O2']
+if os.environ.get('DEBUG'):
+    compile_args = ['-O0', '-Wall']
 
 cysqlite_extension = Extension(
     'cysqlite',
