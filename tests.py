@@ -819,6 +819,22 @@ class TestStatementUsage(BaseTestCase):
         self.assertRaises(OperationalError, self.db.execute, 'bad query')
         self.assertEqual(self.db.get_stmt_usage(), (0, 0))
 
+    def test_evil_stmt(self):
+        self.db.execute('create table g (k)')
+        self.db.executemany('insert into g (k) values (?)',
+                            [('k1',), ('k2',), ('k3',)])
+
+        curs = self.db.execute('select * from g')
+        curs.fetchone()
+
+        def evil(val):
+            res = curs.fetchone()
+            return res[0] if res else None
+
+        self.db.create_function(evil, 'evil')
+        curs2 = self.db.execute('select evil(k) from g')
+        self.assertEqual(list(curs2), [('k2',), ('k3',), (None,)])
+
 
 class TestBlob(BaseTestCase):
     def setUp(self):

@@ -145,7 +145,6 @@ cdef class Statement(object):
         readonly Connection conn
         sqlite3_stmt *st
         bint is_dml
-        bint _in_step  # Re-entrancy check.
         bytes sql
         object __weakref__  # Allow weak-references to be made.
 
@@ -154,7 +153,6 @@ cdef class Statement(object):
         self.sql = sql
         self.st = NULL
         self.is_dml = False
-        self._in_step = False
         self.prepare_statement()
 
     def __dealloc__(self):
@@ -203,10 +201,6 @@ cdef class Statement(object):
             Py_ssize_t nbytes
             Py_buffer view
             int i = 1, rc = 0
-
-        if self._in_step:
-            raise OperationalError('Cannot bind() while statement being '
-                                   'stepped.')
 
         pc = sqlite3_bind_parameter_count(self.st)
         if pc != len(params):
@@ -263,15 +257,8 @@ cdef class Statement(object):
     cdef int step(self):
         cdef int rc
 
-        if self._in_step:
-            raise OperationalError('Statement being already stepped.')
-
-        self._in_step = True
-        try:
-            with nogil:
-                rc = sqlite3_step(self.st)
-        finally:
-            self._in_step = False
+        with nogil:
+            rc = sqlite3_step(self.st)
 
         return rc
 
@@ -281,8 +268,6 @@ cdef class Statement(object):
         return rc
 
     cdef int finalize(self):
-        if self._in_step:
-            raise OperationalError('Cannot finalize Statement while stepping.')
         sqlite3_finalize(self.st)
         self.st = NULL
         return 0
