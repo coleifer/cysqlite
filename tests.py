@@ -194,7 +194,7 @@ class TestExecute(BaseTestCase):
         buf = bytearray(b'\xff\x00\xff')
         mv = memoryview(buf[1:])
 
-        self.db.execute('create table k (data)')
+        self.db.execute('create table k (id integer primary key, data)')
         u = uuid.uuid4()
         self.db.executemany('insert into k (data) values (?)', [
             (datetime.datetime(2026, 1, 2, 3, 4, 5),),
@@ -205,15 +205,15 @@ class TestExecute(BaseTestCase):
             (buf,),
             (u,)])
 
-        res = self.db.execute('select * from k order by data').fetchall()
+        res = self.db.execute('select data from k order by id').fetchall()
         self.assertEqual(res, [
-            (0.6,),
-            (1.23,),
             ('2026-01-02 03:04:05',),
             ('2026-02-03',),
-            (str(u),),
+            (1.23,),
+            (0.6,),
             (b'\x00\xff',),
-            (b'\xff\x00\xff',)])
+            (b'\xff\x00\xff',),
+            (str(u),)])
 
 
 class TestQueryExecution(BaseTestCase):
