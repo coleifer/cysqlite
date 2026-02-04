@@ -2,6 +2,7 @@ import glob
 import os
 import re
 import sys
+import threading
 import unittest
 import uuid
 from decimal import Decimal
@@ -1236,6 +1237,66 @@ class TestBlob(BaseTestCase):
 
         # BLOB is read-only.
         self.assertEqual(blob.read(), b'huey')
+
+
+class TestThreading(BaseTestCase):
+    def setUp(self):
+        super(TestThreading, self).setUp()
+        self.create_table()
+        self.create_rows(('k1', 'v1', 1),
+                         ('k2', 'v2', 2),
+                         ('k3', 'v3', 3))
+        self.threads = 8
+
+    def get_connection(self, **kwargs):
+        conn = Connection(self.filename, **kwargs)
+        conn.connect()
+        conn.pragma('journal_mode', 'wal')
+        return conn
+
+    def run_concurrent(self, fn, *args):
+        threads = [threading.Thread(target=fn, args=args)
+                   for _ in range(self.threads)]
+        for t in threads: t.start()
+        for t in threads: t.join()
+
+    def test_share_connection(self):
+        def work():
+            for i in range(10):
+                self.assertCount(3)
+                self.assertKeys(['k1', 'k2', 'k3'])
+
+        self.run_concurrent(work)
+
+    def test_share_cursor(self):
+        lock = threading.Lock()
+
+        def work(cursor):
+            for i in range(10):
+                # Prevent another thread stepping the cursor. We just want to
+                # test that a cursor can be shared, not the behavior of
+                # multiple threads stepping/overwriting the stmt.
+                with lock:
+                    accum = [row[0] for row in
+                             cursor.execute('select key from kv order by key')]
+                    self.assertEqual(accum, ['k1', 'k2', 'k3'])
+
+        cursor = self.db.cursor()
+        self.run_concurrent(work, cursor)
+
+    def test_busy_wait(self):
+        def work():
+            self.create_rows(('k', 'v', 1))
+
+        def work_txn():
+            with self.db.atomic('exclusive'):
+                self.create_rows(('k', 'v', 1))
+
+        self.run_concurrent(work)
+        self.assertCount(self.threads + 3)
+
+        self.run_concurrent(work)
+        self.assertCount(self.threads + self.threads + 3)
 
 #
 # Helpers, addons, etc.
