@@ -246,6 +246,7 @@ class TestQueryExecution(BaseTestCase):
         self.assertEqual(self.db.last_insert_rowid(), 3)
         self.assertEqual(self.db.changes(), 1)
         self.assertEqual(self.db.total_changes(), 3)
+        self.assertCount(3)
 
         with self.db.atomic():
             curs = self.db.execute('select * from kv order by key')
@@ -408,6 +409,22 @@ class TestQueryExecution(BaseTestCase):
 
         curs = self.db.execute('select key from kv order by key')
         self.assertEqual([row for row, in curs], ['k1', 'k2', 'k3', 'k5'])
+
+    def test_transaction_handling(self):
+        self.db.execute('delete from kv')
+        with self.db.atomic() as txn:
+            self.create_rows(('k1', 'v1', 1))
+            # Cannot close when txn is active.
+            self.assertRaises(OperationalError, self.db.close)
+            with self.db.atomic() as sp:
+                self.create_rows(('k2', 'v2', 2))
+                self.assertRaises(OperationalError, self.db.close)
+
+            # Still cannot close.
+            self.assertRaises(OperationalError, self.db.close)
+
+        self.assertCount(2)
+        self.assertTrue(self.db.close())
 
     def test_create_function(self):
         def reverse(s):

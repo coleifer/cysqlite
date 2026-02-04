@@ -313,8 +313,9 @@ cdef class Statement(object):
                     <char *>sqlite3_column_blob(self.st, i),
                     nbytes)
             else:
-                raise SqliteError('error: cannot bind parameter %d: type = %r'
-                                  % (i, coltype))
+                raise OperationalError(
+                    'error: cannot bind parameter %d: type = %r'
+                    % (i, coltype))
 
             # If we were in C we wouldn't need to do this, but Cython sees that
             # we are losing the reference to the object while looping and
@@ -556,8 +557,8 @@ cdef class Connection(_callable_context_manager):
             return False
 
         if self._transaction_depth > 0:
-            raise SqliteError('cannot close database while a transaction is '
-                              'open.')
+            raise OperationalError('cannot close database while a transaction '
+                                   'is open.')
 
         if self._trace_hook is not None:
             sqlite3_trace_v2(self.db, 0, NULL, NULL)
@@ -597,7 +598,7 @@ cdef class Connection(_callable_context_manager):
 
         cdef int rc = sqlite3_close_v2(self.db)
         if rc != SQLITE_OK:
-            raise SqliteError('error closing database: %s' % rc)
+            raise OperationalError('error closing database: %s' % rc)
 
         self.db = NULL
         return True
@@ -626,7 +627,7 @@ cdef class Connection(_callable_context_manager):
 
         if rc != SQLITE_OK:
             self.db = NULL
-            raise SqliteError('error opening database: %s.' % rc)
+            raise OperationalError('error opening database: %s.' % rc)
 
         if self.extensions:
             rc = sqlite3_enable_load_extension(self.db, 1)
@@ -928,7 +929,7 @@ cdef class Connection(_callable_context_manager):
             sqlite3_backup *backup
 
         if not self.db or not dest.db:
-            raise SqliteError('source or destination database is closed')
+            raise OperationalError('source or destination database is closed')
 
         backup = sqlite3_backup_init(dest.db, bname, self.db, bsrcname)
         if backup == NULL:
@@ -984,7 +985,8 @@ cdef class Connection(_callable_context_manager):
 
         rc = sqlite3_load_extension(self.db, bname, NULL, &errmsg)
         if rc != SQLITE_OK:
-            raise SqliteError('error loading extension: %s' % decode(errmsg))
+            raise OperationalError('error loading extension: %s' %
+                                   decode(errmsg))
 
     def create_function(self, fn, name=None, nargs=-1, deterministic=True):
         check_connection(self)
@@ -1237,7 +1239,7 @@ cdef class Connection(_callable_context_manager):
 
         rc = sqlite3_wal_checkpoint_v2(self.db, zDb, mode, &pnLog, &pnCkpt)
         if rc == SQLITE_MISUSE:
-            raise SqliteError('error: misuse - cannot perform wal checkpoint')
+            raise OperationalError('error: misuse - cannot perform checkpoint')
         elif rc != SQLITE_OK:
             raise_sqlite_error(self.db, 'error performing checkpoint: ')
 
@@ -1695,7 +1697,7 @@ cdef class Blob(object):
             sqlite3_blob *blob
 
         if conn.db == NULL:
-            raise SqliteError('cannot operate on closed database.')
+            raise OperationalError('cannot operate on closed database.')
 
         self.conn = conn
 
@@ -2190,7 +2192,7 @@ def status(flag):
 
     rc = sqlite3_status(flag, &current, &highwater, 0)
     if rc != SQLITE_OK:
-        raise SqliteError('error requesting status: %s' % rc)
+        raise OperationalError('error requesting status: %s' % rc)
     return (current, highwater)
 
 
