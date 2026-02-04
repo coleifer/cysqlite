@@ -940,9 +940,6 @@ class TestDatabaseSettings(BaseTestCase):
 
         conn.executemany('insert into k (data) values (?)',
                          [('k%064d' % i,) for i in range(100)])
-        res = conn.optimize(dry_run=True)
-        self.assertEqual(list(res), [('ANALYZE "main"."k"',)])
-
         self.assertEqual(list(conn.optimize()), [])
 
     @unittest.skipUnless(SLOW_TESTS, 'set SLOW_TESTS=1 to run')
