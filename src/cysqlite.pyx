@@ -378,14 +378,16 @@ cdef class Cursor(object):
             self.set_description()
         elif self.step_status == SQLITE_DONE:
             self.set_description()
-            self.finish()
         else:
             self.abort()
             raise_sqlite_error(self.conn.db, 'error executing query: ')
 
-        if self.stmt is not None and self.stmt.is_dml:
+        if self.stmt.is_dml:
             self.rowcount = self.conn.changes()
             self.lastrowid = self.conn.last_insert_rowid()
+
+        if self.step_status == SQLITE_DONE:
+            self.finish()
 
         return self
 
@@ -400,7 +402,7 @@ cdef class Cursor(object):
             raise OperationalError('Cursor is already in use.')
 
         self.description = None
-        self.rowcount = -1
+        self.rowcount = 0
         self.lastrowid = None
         self.executing = True
 
@@ -412,18 +414,19 @@ cdef class Cursor(object):
 
             self.step_status = self.stmt.step()
             if self.step_status == SQLITE_ROW:
+                self.rowcount = -1
                 self.stmt.reset()
                 self.abort()
                 raise OperationalError('executemany() cannot generate results')
             elif self.step_status == SQLITE_DONE:
+                self.rowcount += self.conn.changes()
                 self.stmt.reset()
             else:
                 self.abort()
                 raise_sqlite_error(self.conn.db, 'error executing query: ')
 
-        self.finish()
-        self.rowcount = self.conn.changes()
         self.lastrowid = self.conn.last_insert_rowid()
+        self.finish()
         return self
 
     def __iter__(self):

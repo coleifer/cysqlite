@@ -60,7 +60,7 @@ class TestOpenConnection(unittest.TestCase):
             row = conn.execute_one('pragma database_list;')
             self.assertEqual(row[2], expected)
 
-    def test_database_open(self):
+    def test_database_filename(self):
         self.assertDB(':memory:', '')
         self.assertDB('/tmp/cysqlite-test.db', '/tmp/cysqlite-test.db')
         self.assertDB('file:///tmp/cysqlite-test.db', '/tmp/cysqlite-test.db')
@@ -68,6 +68,20 @@ class TestOpenConnection(unittest.TestCase):
                       '/tmp/cysqlite-test.db')
         self.assertDB('file:///tmp/cysqlite-test.db?mode=ro&cache=private',
                       '/tmp/cysqlite-test.db')
+
+    def test_open_close(self):
+        db = Connection(':memory:')
+        self.assertTrue(db.is_closed())
+        self.assertTrue(db.connect())
+        self.assertFalse(db.is_closed())
+        self.assertFalse(db.connect())  # Already open.
+        self.assertTrue(db.close())
+        self.assertTrue(db.is_closed())
+        self.assertFalse(db.close())  # Already closed.
+
+        with db:
+            self.assertFalse(db.is_closed())
+        self.assertTrue(db.is_closed())
 
 
 class TestCheckConnection(BaseTestCase):
@@ -106,10 +120,8 @@ class TestCheckConnection(BaseTestCase):
 
     def test_partial_executions(self):
         self.db.execute('create table k (data integer)')
-        curs = self.db.executemany('insert into k (data) values (?)',
-                                   [(1,), (2,), (3,)])
-        self.assertEqual(curs.rowcount, 1)
-        self.assertEqual(curs.lastrowid, 3)
+        self.db.executemany('insert into k (data) values (?)',
+                            [(1,), (2,), (3,)])
 
         curs = self.db.execute('select * from k order by data')
         self.assertEqual(curs.fetchone(), (1,))
@@ -152,10 +164,40 @@ class TestCheckConnection(BaseTestCase):
 class TestExecute(BaseTestCase):
     filename = ':memory:'
 
+    def test_cursor_attributes(self):
+        self.db.execute('create table g (k, v)')
+        curs = self.db.execute('insert into g (k, v) values (?, ?), (?, ?)',
+                               ('k1', 1, 'k2', 2))
+        self.assertEqual(curs.lastrowid, 2)
+        self.assertEqual(curs.rowcount, 2)
+
+        curs = self.db.executemany('insert into g (k, v) values (?, ?)',
+                                   [('k3', 3), ('k4', 4), ('k5', 5)])
+        self.assertEqual(curs.lastrowid, 5)
+        self.assertEqual(curs.rowcount, 3)  # Summed by executemany().
+
+        curs = self.db.execute('update g set v = v + ? where v < ?', (10, 3))
+        self.assertEqual(curs.lastrowid, 5)  # Retained by conn.
+        self.assertEqual(curs.rowcount, 2)
+
+        curs = self.db.execute('update g set v = v + ? where v < ?', (100, 1))
+        self.assertEqual(curs.lastrowid, 5)  # Retained by conn.
+        self.assertEqual(curs.rowcount, 0)
+
+        curs = self.db.execute('delete from g where v < ?', (6,))
+        self.assertEqual(curs.lastrowid, 5)  # Retained by conn.
+        self.assertEqual(curs.rowcount, 3)
+
+        curs = self.db.execute('select * from g')
+        self.assertTrue(curs.lastrowid is None)  # Read queries don't get this.
+        self.assertEqual(curs.rowcount, -1)
+
     def test_execute(self):
         self.db.execute('create table g (k, v)')
-        self.db.execute('insert into g (k, v) values (?, ?), (?, ?), (?, ?)',
-                        ('k1', 1, 'k2', 2, 'k3', 3))
+        curs = self.db.execute('insert into g (k, v) values '
+                               '(?, ?), (?, ?), (?, ?)',
+                               ('k1', 1, 'k2', 2, 'k3', 3))
+
         curs = self.db.execute('select * from g order by v')
         self.assertEqual(list(curs), [('k1', 1), ('k2', 2), ('k3', 3)])
 
@@ -165,11 +207,15 @@ class TestExecute(BaseTestCase):
         row = self.db.execute_one('select sum(v) from g')
         self.assertEqual(row, (6,))
 
+        curs = self.db.execute('select sum(v) from g')
+        self.assertEqual(curs.value(), 6)
+
     def test_executemany(self):
         self.db.execute('create table g (k, v)')
         curs = self.db.cursor()
         params = [('k%02d' % i, 'v%02d' % i) for i in range(100)]
         curs.executemany('insert into g(k, v) values (?,?)', params)
+        self.assertEqual(curs.rowcount, 100)
         self.assertEqual(curs.lastrowid, 100)
 
         res = curs.execute('select k from g order by k desc').fetchall()
@@ -178,9 +224,15 @@ class TestExecute(BaseTestCase):
 
         self.assertRaises(ValueError, lambda: curs.executemany('select 1'))
 
+        # Read queries not allowed by executemany.
         sql = 'select * from k where id > ?'
         self.assertRaises(OperationalError,
                           lambda: curs.executemany(sql, [(1,), (2,)]))
+
+        # Returning queries not allowed by executemany.
+        with self.assertRaises(OperationalError):
+            curs.executemany('insert into g(k, v) values (?, ?) returning k',
+                             [('kx', 1)])
 
     def test_execute_datatypes(self):
         self.db.execute('create table k (id integer not null primary key, '
@@ -378,8 +430,16 @@ class TestQueryExecution(BaseTestCase):
         self.assertEqual(outer, ['k1'])
         self.assertEqual(inner, ['k2', 'k3'])
 
+
+
+class TestTransactions(BaseTestCase):
+    filename = ':memory:'
+
+    def setUp(self):
+        super(TestTransactions, self).setUp()
+        self.create_table()
+
     def test_autocommit(self):
-        self.db.execute('delete from kv')
         self.assertTrue(self.db.autocommit())
         with self.db.atomic() as txn:
             self.assertFalse(self.db.autocommit())
@@ -402,21 +462,20 @@ class TestQueryExecution(BaseTestCase):
         # Manual transaction mode.
         self.db.begin()
         self.assertFalse(self.db.autocommit())
-        self.create_rows(('k4', 'v4', -40))
+        self.create_rows(('k1', 'v1', 1))
         self.db.rollback()
         self.assertTrue(self.db.autocommit())
 
         self.db.begin()
         self.assertFalse(self.db.autocommit())
-        self.create_rows(('k5', 'v5', -50))
+        self.create_rows(('k2', 'v2', 2))
         self.db.commit()
         self.assertTrue(self.db.autocommit())
 
         curs = self.db.execute('select key from kv order by key')
-        self.assertEqual([row for row, in curs], ['k1', 'k2', 'k3', 'k5'])
+        self.assertEqual([row for row, in curs], ['k2'])
 
     def test_transaction_handling(self):
-        self.db.execute('delete from kv')
         with self.db.atomic() as txn:
             self.create_rows(('k1', 'v1', 1))
             # Cannot close when txn is active.
@@ -430,6 +489,110 @@ class TestQueryExecution(BaseTestCase):
 
         self.assertCount(2)
         self.assertTrue(self.db.close())
+
+    def test_exception_rollback(self):
+        # Exception in outermost (transaction) block.
+        try:
+            with self.db.atomic() as txn:
+                self.create_rows(('k1', 'v1', 1))
+                raise ValueError
+        except ValueError:
+            pass
+
+        self.assertTrue(self.db.autocommit())
+        self.assertCount(0)
+
+        # Exception in inner (savepoint) block.
+        with self.db.atomic() as txn:
+            self.create_rows(('k1', 'v1', 1))
+            try:
+                with self.db.atomic() as sp:
+                    self.create_rows(('k2', 'v2', 2))
+                    raise ValueError
+            except ValueError:
+                pass
+            self.assertCount(1)
+            txn.rollback()
+
+            # Transaction begins again since context still active.
+            self.assertFalse(self.db.autocommit())
+
+        self.assertTrue(self.db.autocommit())
+        self.assertCount(0)
+
+        # Except in inner (savepoint) propagates.
+        try:
+            with self.db.atomic() as txn:
+                self.create_rows(('k1', 'v1', 1))
+                with self.db.atomic() as sp:
+                    self.create_rows(('k2', 'v2', 2))
+                    with self.db.atomic() as sp2:
+                        self.create_rows(('k3', 'v3', 3))
+                        self.assertCount(3)
+                        raise ValueError
+        except ValueError:
+            pass
+
+        self.assertTrue(self.db.autocommit())
+        self.assertCount(0)
+
+    def test_explicit_commit(self):
+        # Explicit commit and implicit rollback in outer (transaction) block.
+        try:
+            with self.db.atomic() as txn:
+                self.create_rows(('k1', 'v1', 1))
+                txn.commit()
+                self.assertFalse(self.db.autocommit())  # Txn begins again.
+                self.create_rows(('k2', 'v2', 2))
+                raise ValueError
+        except ValueError:
+            pass
+
+        self.assertTrue(self.db.autocommit())
+        self.assertCount(1)
+        self.assertEqual(self.db.execute('select key from kv').value(), 'k1')
+
+        # Explicit commit and implicit rollback in inner (savepoint) block.
+        with self.db.atomic() as txn:
+            self.create_rows(('k2', 'v2', 2))
+            try:
+                with self.db.atomic() as sp:
+                    self.db.execute('delete from kv')
+                    self.create_rows(('k3', 'v3', 3))
+                    sp.commit()
+                    self.create_rows(('k4', 'v4', 4))
+                    raise ValueError
+            except ValueError:
+                pass
+
+        self.assertTrue(self.db.autocommit())
+        self.assertCount(1)
+        self.assertEqual(self.db.execute('select key from kv').value(), 'k3')
+
+    def test_explicit_rollback(self):
+        # Explicit rollback and implicit commit in outer (transaction) block.
+        with self.db.atomic() as txn:
+            self.create_rows(('k1', 'v1', 1))
+            txn.rollback()
+            self.assertFalse(self.db.autocommit())  # Txn begins again.
+            self.create_rows(('k2', 'v2', 2))
+
+        self.assertTrue(self.db.autocommit())
+        self.assertCount(1)
+        self.assertEqual(self.db.execute('select key from kv').value(), 'k2')
+
+        # Explicit rollback and implicit commit in inner (savepoint) block.
+        with self.db.atomic() as txn:
+            self.create_rows(('k2', 'v2', 2))
+            with self.db.atomic() as sp:
+                self.create_rows(('k3', 'v3', 3))
+                sp.rollback()
+                self.db.execute('delete from kv')
+                self.create_rows(('k4', 'v4', 4))
+
+        self.assertTrue(self.db.autocommit())
+        self.assertCount(1)
+        self.assertEqual(self.db.execute('select key from kv').value(), 'k4')
 
 
 class TestUserDefinedCallbacks(BaseTestCase):
