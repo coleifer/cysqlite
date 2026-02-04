@@ -1,4 +1,5 @@
 # cython: language_level=3
+import cython
 from cpython.bytes cimport PyBytes_AS_STRING
 from cpython.bytes cimport PyBytes_AsString
 from cpython.bytes cimport PyBytes_AsStringAndSize
@@ -140,6 +141,7 @@ cdef inline check_statement(Statement stmt):
         raise OperationalError('Statement no longer valid!')
 
 
+@cython.internal
 cdef class Statement(object):
     cdef:
         readonly Connection conn
@@ -263,12 +265,15 @@ cdef class Statement(object):
         return rc
 
     cdef int reset(self):
-        cdef int rc = sqlite3_reset(self.st)
-        sqlite3_clear_bindings(self.st)
+        cdef int c
+        with nogil:
+            rc = sqlite3_reset(self.st)
+            sqlite3_clear_bindings(self.st)
         return rc
 
     cdef int finalize(self):
-        sqlite3_finalize(self.st)
+        with nogil:
+            sqlite3_finalize(self.st)
         self.st = NULL
         return 0
 
