@@ -12,11 +12,10 @@ from cysqlite import *
 
 class BaseTestCase(unittest.TestCase):
     filename = '/tmp/cysqlite.db'
-    pattern = filename + '*'
 
     def cleanup(self):
         if self.filename != ':memory:':
-            for filename in glob.glob(self.pattern):
+            for filename in glob.glob(self.filename + '*'):
                 if os.path.isfile(filename):
                     os.unlink(filename)
 
@@ -824,6 +823,11 @@ class TestDatabaseSettings(BaseTestCase):
         super(TestDatabaseSettings, self).setUp()
         self.create_table()
 
+    def tearDown(self):
+        super(TestDatabaseSettings, self).tearDown()
+        for filename in glob.glob('/tmp/cysqlite.db*'):
+            os.unlink(filename)
+
     def test_pragmas_settings(self):
         self.db.execute('pragma foreign_keys = 1')
         self.assertEqual(self.db.get_foreign_keys_enabled(), 1)
@@ -869,6 +873,32 @@ class TestDatabaseSettings(BaseTestCase):
         self.assertEqual(self.db.get_foreign_keys('kv'), [])
         self.assertEqual(self.db.get_foreign_keys('krel'), [
             ForeignKey('kv_id', 'kv', 'id', 'krel')])
+
+    def test_database_list(self):
+        self.assertEqual(self.db.database_list(), [('main', '')])
+
+        conn = Connection('/tmp/cysqlite.db')
+        conn.connect()
+        self.db.attach('/tmp/cysqlite.db', 'addl')
+
+        self.assertEqual(self.db.database_list(), [
+            ('main', ''),
+            ('addl', '/tmp/cysqlite.db')])
+
+    def test_optimize(self):
+        conn = Connection('/tmp/cysqlite.db', autoconnect=True)
+        conn.execute('create table k (id integer not null primary key, '
+                     'data text not null)')
+        conn.execute('create index k_data on k(data)')
+        res = conn.optimize(dry_run=True)
+        self.assertEqual(list(res), [])
+
+        conn.executemany('insert into k (data) values (?)',
+                         [('k%064d' % i,) for i in range(100)])
+        res = conn.optimize(dry_run=True)
+        self.assertEqual(list(res), [('ANALYZE "main"."k"',)])
+
+        self.assertEqual(list(conn.optimize()), [])
 
 
 class TestBackup(BaseTestCase):

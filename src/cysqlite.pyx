@@ -1175,6 +1175,27 @@ cdef class Connection(_callable_context_manager):
         cdef sqlite3_int64 n = int(self.timeout * 1000)
         sqlite3_busy_handler(self.db, _aggressive_busy_handler, <void *>n)
 
+    def optimize(self, debug=False, run_tables=True, set_limit=True,
+                 check_table_sizes=False, dry_run=False):
+        if dry_run:
+            mode = -1
+        else:
+            mode = 0
+            if debug: mode |= 0x01
+            if run_tables: mode |= 0x02
+            if set_limit: mode |= 0x10
+            if check_table_sizes: mode |= 0x10000
+        return self.execute('pragma optimize=%d' % mode)
+
+    def attach(self, filename, name):
+        check_connection(self)
+        self.execute_one('attach database "%s" as "%s"' % (filename, name))
+
+    def database_list(self):
+        check_connection(self)
+        return [(row[1], row[2])
+                for row in self.execute('pragma database_list')]
+
     def set_main_db_name(self, name):
         check_connection(self)
         cdef bytes bname = encode(name)
