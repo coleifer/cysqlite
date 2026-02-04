@@ -225,6 +225,14 @@ class TestQueryExecution(BaseTestCase):
         self.create_table()
         self.create_rows(*self.test_data)
 
+    def assertCount(self, n):
+        curs = self.db.execute('select count(*) from kv')
+        self.assertEqual(curs.value(), n)
+
+    def assertKeys(self, expected):
+        curs = self.db.execute('select key from kv order by key')
+        self.assertEqual([k for k, in curs], expected)
+
     def test_connect_close(self):
         self.assertFalse(self.db.is_closed())
         self.assertFalse(self.db.connect())
@@ -246,28 +254,37 @@ class TestQueryExecution(BaseTestCase):
     def test_returning(self):
         sql = ('insert into kv (key, value, extra) values (?,?,?), (?,?,?) '
                'returning key')
+        # Add two rows - lastrowid is immediately set even though we didn't
+        # step over the RETURNING result set.
         curs = self.db.execute(sql, ('k4', 'v4', 4, 'k5', 'v5', 5))
         self.assertEqual(curs.lastrowid, 5)
         self.assertEqual(curs.fetchone(), ('k4',))
         self.assertEqual(curs.fetchone(), ('k5',))
 
+        # We can close the cursor without fully stepping it.
         curs = self.db.execute(sql, ('k6', 'v6', 6, 'k7', 'v7', 7))
         self.assertEqual(curs.lastrowid, 7)
         curs.close()  # Abandon cursor without stepping.
 
-        self.assertEqual(self.db.execute_one('select count(*) from kv'), (7,))
+        self.assertCount(7)  # Changes are visible.
 
+        # We can also issue a DELETE / RETURNING and the changes are
+        # immediately effective.
         sql = 'delete from kv where key in (?, ?) returning value'
         curs = self.db.execute(sql, ('k5', 'k7'))
+        self.assertCount(5)  # Immediately visible.
+
         self.assertEqual(curs.rowcount, 2)
         self.assertEqual(sorted(curs.fetchall()), [('v5',), ('v7',)])
 
+        # We can close the cursor, as well.
         curs = self.db.execute(sql, ('k4', 'k6'))
         self.assertEqual(curs.rowcount, 2)
         curs.close()
 
-        self.assertEqual(self.db.execute_one('select count(*) from kv'), (3,))
+        self.assertCount(3)
 
+        # Same behavior w/UPDATE queries.
         sql = ('update kv set extra = extra + 1 where key in (?, ?) '
                'returning key, extra')
         curs = self.db.execute(sql, ('k1', 'k2'))
@@ -288,6 +305,47 @@ class TestQueryExecution(BaseTestCase):
         curs.close()
         self.assertEqual(self.db.execute_one('select sum(extra) from kv'),
                          (64,))
+
+    def test_returning_on_conflict(self):
+        self.db.execute('create table k (key text not null primary key, '
+                        'value text not null)')
+        self.db.execute('insert into k (key, value) values (?, ?)',
+                        ('k1', 'v1'))
+
+        # This INSERT + ON CONFLICT also uses a RETURNING clause.
+        curs = self.db.execute('insert into k (key, value) '
+                               'values (?, ?), (?, ?), (?, ?) '
+                               'on conflict do update '
+                               'set value = value || excluded.value '
+                               'returning key, value',
+                               ('k1', 'x', 'k2', 'v2', 'k1', 'z'))
+
+        # Query the table *before* stepping the INSERT cursor.
+        curs2 = self.db.execute('select key, value from k order by key')
+        self.assertEqual(curs2.fetchall(), [('k1', 'v1xz'), ('k2', 'v2')])
+
+        # Stepping the INSERT cursor gives the expected results.
+        self.assertEqual(curs.fetchall(), [
+            ('k1', 'v1x'),
+            ('k2', 'v2'),
+            ('k1', 'v1xz')])
+
+        # We will get an IntegrityError for duplicate key violation, which
+        # triggers the FAIL logic -- FAIL stops processing but does not remove
+        # previously-inserted rows.
+        with self.assertRaises(IntegrityError):
+            curs = self.db.execute('insert or fail into k (key, value) '
+                                   'values (?, ?), (?, ?), (?, ?) '
+                                   'returning key, value',
+                                   ('k3', 'v3', 'k1', 'v1a', 'k4', 'v4'))
+
+        # Query the table *before* stepping the INSERT cursor.
+        curs2 = self.db.execute('select key, value from k order by key')
+        self.assertEqual(curs2.fetchall(),
+                         [('k1', 'v1xz'), ('k2', 'v2'), ('k3', 'v3')])
+
+        self.assertEqual(curs.rowcount, 1)
+        self.assertEqual(list(curs), [])  # No results.
 
     def test_nested_iteration(self):
         curs = self.db.execute('select key from kv order by key')
@@ -441,14 +499,6 @@ class TestQueryExecution(BaseTestCase):
 
         self.assertTrue(self.db.autocommit())
         self.db.commit_hook(None)
-
-    def assertCount(self, n):
-        curs = self.db.execute('select count(*) from kv')
-        self.assertEqual(curs.value(), n)
-
-    def assertKeys(self, expected):
-        curs = self.db.execute('select key from kv order by key')
-        self.assertEqual([k for k, in curs], expected)
 
     def test_rollback_hook(self):
         state = [0]
