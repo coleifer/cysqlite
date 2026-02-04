@@ -347,6 +347,19 @@ class TestQueryExecution(BaseTestCase):
         self.assertEqual(curs.rowcount, 1)
         self.assertEqual(list(curs), [])  # No results.
 
+        curs = self.db.execute('insert or fail into k (key, value) '
+                               'values (?, ?), (?, ?) '
+                               'on conflict do nothing '
+                               'returning key, value',
+                               ('k4', 'v4', 'k1', 'v1a'))
+        curs2 = self.db.execute('select key, value from k order by key')
+        self.assertEqual(curs2.fetchall(), [
+            ('k1', 'v1xz'),
+            ('k2', 'v2'),
+            ('k3', 'v3'),
+            ('k4', 'v4')])
+        self.assertEqual(list(curs), [('k4', 'v4')])
+
     def test_nested_iteration(self):
         curs = self.db.execute('select key from kv order by key')
         outer = []
