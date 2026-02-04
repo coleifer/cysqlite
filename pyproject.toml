@@ -3,8 +3,8 @@ requires = ["setuptools", "wheel", "cython"]
 
 [project]
 name = "cysqlite"
-version = "0.1.0"
-description = "bindings for sqlite3"
+version = "0.1.1"
+description = "sqlite3 binding"
 readme = "README.md"
 authors = [
     { name = "Charles Leifer", email = "coleifer@gmail.com" }
@@ -31,3 +31,7 @@ include = ["cysqlite*"]
 
 [tool.setuptools.package-data]
 cysqlite = ["*.pxd", "*.pxi", "*.c"]
+
+[tool.cibuildwheel]
+build = "cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
+skip = "pp* *-musllinux_i686"
