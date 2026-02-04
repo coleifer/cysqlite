@@ -39,6 +39,14 @@ class BaseTestCase(unittest.TestCase):
             self.db.execute('insert into "kv" ("key", "value", "extra") '
                             'values (?, ?, ?)', row)
 
+    def assertCount(self, n):
+        curs = self.db.execute('select count(*) from kv')
+        self.assertEqual(curs.value(), n)
+
+    def assertKeys(self, expected):
+        curs = self.db.execute('select key from kv order by key')
+        self.assertEqual([k for k, in curs], expected)
+
 
 class TestOpenConnection(unittest.TestCase):
     def tearDown(self):
@@ -224,14 +232,6 @@ class TestQueryExecution(BaseTestCase):
         super(TestQueryExecution, self).setUp()
         self.create_table()
         self.create_rows(*self.test_data)
-
-    def assertCount(self, n):
-        curs = self.db.execute('select count(*) from kv')
-        self.assertEqual(curs.value(), n)
-
-    def assertKeys(self, expected):
-        curs = self.db.execute('select key from kv order by key')
-        self.assertEqual([k for k, in curs], expected)
 
     def test_connect_close(self):
         self.assertFalse(self.db.is_closed())
@@ -430,6 +430,16 @@ class TestQueryExecution(BaseTestCase):
 
         self.assertCount(2)
         self.assertTrue(self.db.close())
+
+
+class TestUserDefinedCallbacks(BaseTestCase):
+    filename = ':memory:'
+    test_data = [('k1', 'v1x', 10), ('k2', 'v2b', 20), ('k3', 'v3z', 30)]
+
+    def setUp(self):
+        super(TestUserDefinedCallbacks, self).setUp()
+        self.create_table()
+        self.create_rows(*self.test_data)
 
     def test_create_function(self):
         def reverse(s):
@@ -644,6 +654,13 @@ class TestQueryExecution(BaseTestCase):
         del accum[:]
         self.db.execute_simple('select key, value from kv order by key', cb)
         self.assertEqual(accum, [('k3', 'v3z')])
+
+
+class TestDatabaseSettings(BaseTestCase):
+    filename = ':memory:'
+    def setUp(self):
+        super(TestDatabaseSettings, self).setUp()
+        self.create_table()
 
     def test_pragmas_settings(self):
         self.db.execute('pragma foreign_keys = 1')
@@ -920,6 +937,9 @@ class TestBlob(BaseTestCase):
         # BLOB is read-only.
         self.assertEqual(blob.read(), b'huey')
 
+#
+# Helpers, addons, etc.
+#
 
 class DataTypes(TableFunction):
     columns = ('key', 'value')
