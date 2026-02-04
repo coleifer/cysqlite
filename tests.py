@@ -130,6 +130,10 @@ class TestCheckConnection(BaseTestCase):
         self.db.executemany('insert into k (data) values (?)',
                             [(1,), (2,), (3,)])
         curs = self.db.execute('select * from k order by data')
+
+        # Cursor is no good. Run twice to ensure state doesn't change on first
+        # failure.
+        self.assertRaises(OperationalError, curs.execute, 'select 1')
         self.assertRaises(OperationalError, curs.execute, 'select 1')
 
         # We can close and re-execute, though.
@@ -169,6 +173,18 @@ class TestExecute(BaseTestCase):
         sql = 'select * from k where id > ?'
         self.assertRaises(OperationalError,
                           lambda: curs.executemany(sql, [(1,), (2,)]))
+
+    def test_execute_datatypes(self):
+        self.db.execute('create table k (id integer not null primary key, '
+                        'n, i integer, r real, t text, b blob)')
+        data = [(None, 1, 3.5, 'text', b'\x00\xff'),
+                ('test', None, None, None, None),
+                (b'\x00', -1, -3.5, '2', b'3')]
+        self.db.executemany(
+            'insert into k (n, i, r, t, b) values (?,?,?,?,?)',
+            data)
+        curs = self.db.execute('select n,i,r,t,b from k order by id')
+        self.assertEqual(curs.fetchall(), data)
 
 
 class TestQueryExecution(BaseTestCase):
