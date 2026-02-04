@@ -2234,28 +2234,29 @@ cdef tuple sqlite_to_python(int argc, sqlite3_value **params):
     cdef:
         int i, vtype
         tuple result = PyTuple_New(argc)
+        object value
 
     for i in range(argc):
         vtype = sqlite3_value_type(params[i])
-        if vtype == SQLITE_INTEGER:
-            pyval = sqlite3_value_int64(params[i])
+        if vtype == SQLITE_NULL:
+            value = None
+        elif vtype == SQLITE_INTEGER:
+            value = PyLong_FromLongLong(sqlite3_value_int64(params[i]))
         elif vtype == SQLITE_FLOAT:
-            pyval = sqlite3_value_double(params[i])
+            value = PyFloat_FromDouble(sqlite3_value_double(params[i]))
         elif vtype == SQLITE_TEXT:
-            pyval = PyUnicode_DecodeUTF8(
+            value = PyUnicode_DecodeUTF8(
                 <const char *>sqlite3_value_text(params[i]),
                 <Py_ssize_t>sqlite3_value_bytes(params[i]), NULL)
         elif vtype == SQLITE_BLOB:
-            pyval = PyBytes_FromStringAndSize(
+            value = PyBytes_FromStringAndSize(
                 <const char *>sqlite3_value_blob(params[i]),
                 <Py_ssize_t>sqlite3_value_bytes(params[i]))
-        elif vtype == SQLITE_NULL:
-            pyval = None
         else:
-            pyval = None
+            value = None
 
-        Py_INCREF(pyval)
-        PyTuple_SET_ITEM(result, i, pyval)
+        Py_INCREF(value)
+        PyTuple_SET_ITEM(result, i, value)
 
     return result
 
