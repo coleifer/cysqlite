@@ -2160,8 +2160,19 @@ class TestTableFunction(BaseTestCase):
                         (4, 3))
         assertValues((1, 'k1', 'v1zz'), (2, 'k2', 'v2yzz'), (4, 'k3', 'v3zz'))
 
+        self.assertEqual(MemStore._data, {
+            1: {'id': 1, 'key': 'k1', 'value': 'v1zz'},
+            2: {'id': 2, 'key': 'k2', 'value': 'v2yzz'},
+            4: {'id': 4, 'key': 'k3', 'value': 'v3zz'},
+        })
+
         self.db.execute('delete from memstore where key = ?', ('k2',))
         assertValues((1, 'k1', 'v1zz'), (4, 'k3', 'v3zz'))
+
+        self.assertEqual(MemStore._data, {
+            1: {'id': 1, 'key': 'k1', 'value': 'v1zz'},
+            4: {'id': 4, 'key': 'k3', 'value': 'v3zz'},
+        })
 
         self.db.execute('delete from memstore where key = ?', ('k2',))
         assertValues((1, 'k1', 'v1zz'), (4, 'k3', 'v3zz'))
