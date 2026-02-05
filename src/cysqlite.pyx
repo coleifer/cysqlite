@@ -606,6 +606,8 @@ cdef class Connection(_callable_context_manager):
         public str database
         public str vfs
         public object row_factory
+        public bint print_callback_tracebacks
+        public object callback_error
 
         # List of statements, transactions, savepoints, blob handles?
         dict functions
@@ -627,6 +629,8 @@ cdef class Connection(_callable_context_manager):
         self.cached_statements = cached_statements
         self.extensions = extensions
         self.row_factory = row_factory
+        self.print_callback_tracebacks = False
+        self.callback_error = None
 
         self.db = NULL
         self.functions = {}
@@ -695,6 +699,9 @@ cdef class Connection(_callable_context_manager):
         # Ensure user references to statements cannot be used after the
         # connection has been closed.
         self.finalize_statements()
+
+        # Clear last error.
+        self.callback_error = None
 
         cdef int rc = sqlite3_close_v2(self.db)
         if rc != SQLITE_OK:
@@ -817,11 +824,13 @@ cdef class Connection(_callable_context_manager):
             bytes bsql = encode(sql)
             char *errmsg
             int rc = 0
+            tuple ctx = (callback, self)
             void *userdata = NULL
 
         if callback is not None:
             Py_INCREF(callback)
             callback.rowtype = None
+            callback.conn = self
             userdata = <void *>callback
 
         try:
@@ -832,6 +841,8 @@ cdef class Connection(_callable_context_manager):
             raise
         finally:
             if callback is not None:
+                del callback.rowtype
+                del callback.conn
                 Py_DECREF(callback)
 
     cdef _execute_internal(self, sql):
@@ -1383,8 +1394,9 @@ cdef void _function_cb(sqlite3_context *ctx, int argc, sqlite3_value **argv) noe
     try:
         result = cb.fn(*params)
     except Exception as exc:
-        # XXX: report error back to conn.
-        traceback.print_exc()
+        cb.conn.callback_error = exc
+        if cb.conn.print_callback_tracebacks:
+            traceback.print_exc()
         sqlite3_result_error(ctx, b'error in user-defined function', -1)
     else:
         python_to_sqlite(ctx, result)
@@ -1392,42 +1404,60 @@ cdef void _function_cb(sqlite3_context *ctx, int argc, sqlite3_value **argv) noe
 
 ctypedef struct aggregate_ctx:
     int in_use
-    PyObject *agg
+    PyObject *wrapper
+
+cdef class _AggregateWrapper(object):
+    cdef:
+        object aggregate
+        Connection conn
+
+    def __cinit__(self, aggregate, conn):
+        self.aggregate = aggregate
+        self.conn = conn
 
 
-cdef object get_aggregate(sqlite3_context *ctx):
+cdef _AggregateWrapper get_aggregate(sqlite3_context *ctx):
     cdef:
         aggregate_ctx *agg_ctx = <aggregate_ctx *>sqlite3_aggregate_context(ctx, sizeof(aggregate_ctx))
 
     if agg_ctx.in_use:
-        return <object>agg_ctx.agg  # Borrowed.
+        return <object>agg_ctx.wrapper  # Borrowed.
 
     cdef _Callback cb = <_Callback>sqlite3_user_data(ctx)
     try:
-        agg = cb.fn()  # Create aggregate instance.
+        aggregate = cb.fn()  # Create aggregate instance.
     except Exception as exc:
-        # XXX: report error back to conn.
-        traceback.print_exc()
+        cb.conn.callback_error = exc
+        if cb.conn.print_callback_tracebacks:
+            traceback.print_exc()
         sqlite3_result_error(ctx, b'error in user-defined aggregate', -1)
         return
 
-    Py_INCREF(agg)  # Owned.
+    wrapper = _AggregateWrapper(aggregate, cb.conn)
+
+    Py_INCREF(wrapper)  # Owned.
     agg_ctx.in_use = 1
-    agg_ctx.agg = <PyObject *>agg
-    return agg
+    agg_ctx.wrapper = <PyObject *>wrapper
+    return wrapper
 
 
 cdef void _step_cb(sqlite3_context *ctx, int argc, sqlite3_value **argv) noexcept with gil:
-    cdef tuple params
+    cdef:
+        _AggregateWrapper wrapper
+        tuple params
 
     # Get the aggregate instance, creating it if this is the first call.
-    agg = get_aggregate(ctx)
+    wrapper = get_aggregate(ctx)
+    if not wrapper:
+        return
+
     params = sqlite_to_python(argc, argv)
     try:
-        result = agg.step(*params)
+        result = wrapper.aggregate.step(*params)
     except Exception as exc:
-        # XXX: report error back to conn.
-        traceback.print_exc()
+        wrapper.conn.callback_error = exc
+        if wrapper.conn.print_callback_tracebacks:
+            traceback.print_exc()
         sqlite3_result_error(ctx, b'error in user-defined aggregate', -1)
 
 
@@ -1438,40 +1468,45 @@ cdef void _finalize_cb(sqlite3_context *ctx) noexcept with gil:
         sqlite3_result_null(ctx)
         return
 
-    agg = <object>agg_ctx.agg
+    wrapper = <_AggregateWrapper>agg_ctx.wrapper
     try:
-        result = agg.finalize()
+        result = wrapper.aggregate.finalize()
     except Exception as exc:
-        # XXX: report error back to conn.
-        traceback.print_exc()
+        wrapper.conn.callback_error = exc
+        if wrapper.conn.print_callback_tracebacks:
+            traceback.print_exc()
         sqlite3_result_error(ctx, b'error in user-defined aggregate', -1)
     else:
         python_to_sqlite(ctx, result)
 
-    Py_DECREF(agg)  # Match incref.
+    Py_DECREF(wrapper)  # Match incref.
     agg_ctx.in_use = 0
-    agg_ctx.agg = NULL
+    agg_ctx.wrapper = NULL
 
 
 cdef void _value_cb(sqlite3_context *ctx) noexcept with gil:
-    agg = get_aggregate(ctx)
+    cdef:
+        _AggregateWrapper wrapper = get_aggregate(ctx)
     try:
-        result = agg.value()
+        result = wrapper.aggregate.value()
     except Exception as exc:
-        # XXX: report error back to conn.
-        traceback.print_exc()
+        wrapper.conn.callback_error = exc
+        if wrapper.conn.print_callback_tracebacks:
+            traceback.print_exc()
         sqlite3_result_error(ctx, b'error in user-defined window function', -1)
     else:
         python_to_sqlite(ctx, result)
 
 
 cdef void _inverse_cb(sqlite3_context *ctx, int argc, sqlite3_value **params) noexcept with gil:
-    agg = get_aggregate(ctx)
+    cdef:
+        _AggregateWrapper wrapper = get_aggregate(ctx)
     try:
-        agg.inverse(*sqlite_to_python(argc, params))
+        wrapper.aggregate.inverse(*sqlite_to_python(argc, params))
     except Exception as exc:
-        # XXX: report error back to conn.
-        traceback.print_exc()
+        wrapper.conn.callback_error = exc
+        if wrapper.conn.print_callback_tracebacks:
+            traceback.print_exc()
         sqlite3_result_error(ctx, b'error in user-defined window function', -1)
 
 
@@ -1489,8 +1524,10 @@ cdef int _collation_cb(void *data, int n1, const void *data1,
     try:
         result = cb.fn(str1, str2)
     except Exception as exc:
-        # XXX: report error back to conn.
-        traceback.print_exc()
+        cb.conn.callback_error = exc
+        if cb.conn.print_callback_tracebacks:
+            traceback.print_exc()
+        return 0
 
     if result > 0:
         return 1
@@ -1510,7 +1547,11 @@ cdef int _commit_cb(void *data) noexcept with gil:
     except ValueError:
         return SQLITE_ERROR
     except Exception as exc:
-        traceback.print_exc()
+        cb.conn.callback_error = exc
+        if cb.conn.print_callback_tracebacks:
+            traceback.print_exc()
+        return SQLITE_ERROR
+
     return SQLITE_OK
 
 
@@ -1520,7 +1561,9 @@ cdef void _rollback_cb(void *data) noexcept with gil:
     try:
         cb.fn()
     except Exception as exc:
-        traceback.print_exc()
+        cb.conn.callback_error = exc
+        if cb.conn.print_callback_tracebacks:
+            traceback.print_exc()
 
 
 cdef void _update_cb(void *data, int queryType, const char *database,
@@ -1543,7 +1586,9 @@ cdef void _update_cb(void *data, int queryType, const char *database,
     try:
         cb.fn(query, decode(database), decode(table), <int>rowid)
     except Exception as exc:
-        traceback.print_exc()
+        cb.conn.callback_error = exc
+        if cb.conn.print_callback_tracebacks:
+            traceback.print_exc()
 
 
 AUTH_OK = 0
@@ -1606,8 +1651,10 @@ cdef int _auth_cb(void *data, int op, const char *p1, const char *p2,
     try:
         rc = cb.fn(op, s1, s2, s3, s4)
     except Exception as exc:
-        traceback.print_exc()
-        rc = SQLITE_OK
+        cb.conn.callback_error = exc
+        if cb.conn.print_callback_tracebacks:
+            traceback.print_exc()
+        rc = SQLITE_ERROR
     return rc
 
 
@@ -1645,8 +1692,12 @@ cdef int _trace_cb(unsigned event, void *data, void *p, void *x) noexcept with g
     try:
         cb.fn(event, sid, sql, ns)
     except Exception as exc:
-        traceback.print_exc()
-        return SQLITE_ERROR
+        cb.conn.callback_error = exc
+        if cb.conn.print_callback_tracebacks:
+            traceback.print_exc()
+        # NOTE: Sqlite ignores non-zero return values but this may change in
+        # the future. Currently they advise returning 0.
+        # return SQLITE_ERROR
 
     return SQLITE_OK
 
@@ -1657,7 +1708,9 @@ cdef int _progress_cb(void *data) noexcept with gil:
     try:
         ret = cb.fn() or 0
     except Exception as exc:
-        traceback.print_exc()
+        cb.conn.callback_error = exc
+        if cb.conn.print_callback_tracebacks:
+            traceback.print_exc()
         ret = SQLITE_OK
     return <int>ret
 
@@ -1666,8 +1719,13 @@ cdef int _exec_callback(void *data, int argc, char **argv, char **colnames) noex
     cdef:
         bytes bcol
         int i
-        object callback = <object>data  # Re-cast userdata callback.
+        object callback
 
+    if data == NULL:
+        # If no callback given, just return.
+        return SQLITE_OK
+
+    callback = <object>data
     if not getattr(callback, 'rowtype', None):
         cols = []
         for i in range(argc):
@@ -1680,7 +1738,9 @@ cdef int _exec_callback(void *data, int argc, char **argv, char **colnames) noex
     try:
         callback(row)
     except Exception as exc:
-        traceback.print_exc()
+        callback.conn.callback_error = exc
+        if callback.conn.print_callback_tracebacks:
+            traceback.print_exc()
         return SQLITE_ERROR
 
     return SQLITE_OK

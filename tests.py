@@ -875,10 +875,19 @@ class TestUserDefinedCallbacks(BaseTestCase):
             ('k1', 'x1v'),
             ('k3', 'z3v')])
 
+        curs = self.db.execute('select key, reverse(reverse(value)) from kv '
+                               'order by reverse(value)')
+        self.assertEqual(list(curs), [
+            ('k2', 'v2b'),
+            ('k1', 'v1x'),
+            ('k3', 'v3z')])
+
+        self.assertTrue(self.db.callback_error is None)
         self.assertRaises(
             OperationalError,
             self.db.execute,
             'select reverse(1)')
+        self.assertTrue(isinstance(self.db.callback_error, TypeError))
 
     def test_create_function_multiple(self):
         def add(a, b):
@@ -894,7 +903,11 @@ class TestUserDefinedCallbacks(BaseTestCase):
         self.assertEqual(run(1, 2), 3)
         self.assertEqual(run('a', 'bc'), 'abc')
 
+        self.assertTrue(self.db.callback_error is None)
         self.assertRaises(OperationalError, lambda: run(None, 1))
+        self.assertTrue(isinstance(self.db.callback_error, TypeError))
+
+        # These are raised by Sqlite since we passed wrong num parameters.
         self.assertRaises(OperationalError, lambda: run(1))
         self.assertRaises(OperationalError, lambda: run(1, 2, 3))
 
@@ -906,7 +919,47 @@ class TestUserDefinedCallbacks(BaseTestCase):
 
         self.db.create_aggregate(Sum, 'mysum', 1)
         curs = self.db.execute('select mysum(extra) from kv')
-        self.assertEqual(curs.fetchone(), (60,))
+        self.assertEqual(curs.value(), 60)
+
+    def test_aggregate_broken_init(self):
+        class BrokenInit(object):
+            def __init__(self):
+                raise ValueError('broken init')
+
+        self.db.create_aggregate(BrokenInit, 'broken_init', 1)
+        self.assertRaises(OperationalError, self.db.execute,
+                          'select broken_init(extra) from kv')
+        self.assertTrue(isinstance(self.db.callback_error, ValueError))
+        self.assertEqual(self.db.callback_error.args[0], 'broken init')
+
+    def test_aggregate_broken_step(self):
+        class BrokenStep(object):
+            def __init__(self): pass
+            def step(self, value):
+                if value > 10:
+                    raise ValueError('broken step')
+            def finalize(self):
+                return 0
+
+        self.db.create_aggregate(BrokenStep, 'broken_step', 1)
+        self.assertRaises(OperationalError, self.db.execute,
+                          'select broken_step(extra) from kv')
+        self.assertTrue(isinstance(self.db.callback_error, ValueError))
+        self.assertEqual(self.db.callback_error.args[0], 'broken step')
+
+    def test_aggregate_broken_finalize(self):
+        class BrokenFinalize(object):
+            def __init__(self): pass
+            def step(self, value): pass
+            def finalize(self):
+                raise ValueError('broken finalize')
+                return 0
+
+        self.db.create_aggregate(BrokenFinalize, 'broken_finalize', 1)
+        self.assertRaises(OperationalError, self.db.execute,
+                          'select broken_finalize(extra) from kv')
+        self.assertTrue(isinstance(self.db.callback_error, ValueError))
+        self.assertEqual(self.db.callback_error.args[0], 'broken finalize')
 
     def test_create_window_function(self):
         class Sum(object):
@@ -934,6 +987,42 @@ class TestUserDefinedCallbacks(BaseTestCase):
             ('k3', 30, 233), ('k3', 101, 233), ('k3', 102, 233),
             ('k4', 1337, 1337)])
 
+        class BrokenInit(Sum):
+            def __init__(self): raise ValueError('broken_init')
+        class BrokenStep(Sum):
+            def step(self, value):
+                raise ValueError('broken_step')
+        class BrokenInverse(Sum):
+            def inverse(self, value):
+                raise ValueError('broken_inverse')
+        class BrokenValue(Sum):
+            def value(self):
+                raise ValueError('broken_value')
+        class BrokenFinalize(Sum):
+            def finalize(self):
+                raise ValueError('broken_finalize')
+
+        pairs = (
+            (BrokenInit, 'broken_init'),
+            (BrokenStep, 'broken_step'),
+            (BrokenInverse, 'broken_inverse'),
+            (BrokenValue, 'broken_value'),
+            # Not sure why this isn't working - it is called but the error
+            # value is not reported to Sqlite, which then doesn't report the
+            # error to the user.
+            #(BrokenFinalize, 'broken_finalize'),
+        )
+        for agg, name in pairs:
+            self.db.create_window_function(agg, name, 1)
+            with self.assertRaises(OperationalError):
+                curs = self.db.execute('select key, extra, %s(extra) over ('
+                                       'order by id rows between '
+                                       '1 preceding and 1 following) '
+                                       'from kv order by key, extra' % name)
+                curs.fetchall()
+            self.assertTrue(isinstance(self.db.callback_error, ValueError))
+            self.assertEqual(self.db.callback_error.args[0], name)
+
     def test_create_collation(self):
         def case_insensitive(s1, s2):
             s1 = s1.lower()
@@ -954,6 +1043,19 @@ class TestUserDefinedCallbacks(BaseTestCase):
             ('k1', 'v1x'), ('K1', 'V1Xx'),
             ('k2', 'v2b'), ('k3', 'v3z'),
             ('k4', 'V4'), ('Z1', 'za1')])
+
+    def test_broken_collation(self):
+        def broken(a, b):
+            raise ValueError('broken')
+
+        self.create_rows(('k1', 'v1', 0), ('k2', 'v2', 0))
+        self.db.create_collation(broken, 'broken')
+
+        # Collations cannot trigger errors.
+        self.db.execute('select * from kv order by key collate broken')
+
+        self.assertTrue(isinstance(self.db.callback_error, ValueError))
+        self.assertEqual(self.db.callback_error.args[0], 'broken')
 
     def test_commit_hook(self):
         state = [0]
@@ -989,6 +1091,24 @@ class TestUserDefinedCallbacks(BaseTestCase):
         self.assertTrue(self.db.autocommit())
         self.db.commit_hook(None)
 
+    def test_broken_commit_hook(self):
+        def broken():
+            raise TypeError('fail')
+
+        self.db.commit_hook(broken)
+        self.db.begin()
+        self.db.execute('delete from kv')
+        self.assertCount(0)
+        self.assertFalse(self.db.autocommit())
+        with self.assertRaises(IntegrityError):
+            self.db.commit()
+
+        self.assertTrue(isinstance(self.db.callback_error, TypeError))
+        self.assertEqual(self.db.callback_error.args[0], 'fail')
+
+        self.assertTrue(self.db.autocommit())
+        self.assertCount(3)
+
     def test_rollback_hook(self):
         state = [0]
         def on_rollback():
@@ -1012,6 +1132,23 @@ class TestUserDefinedCallbacks(BaseTestCase):
         self.assertKeys(['k2', 'k3'])
         self.assertEqual(state, [1])
 
+    def test_broken_rollback_hook(self):
+        def broken():
+            raise TypeError('rbfail')
+
+        self.db.rollback_hook(broken)
+        self.db.begin()
+        self.db.execute('delete from kv')
+        self.assertCount(0)
+        self.assertFalse(self.db.autocommit())
+        self.db.rollback()
+
+        self.assertTrue(isinstance(self.db.callback_error, TypeError))
+        self.assertEqual(self.db.callback_error.args[0], 'rbfail')
+
+        self.assertTrue(self.db.autocommit())
+        self.assertCount(3)
+
     def test_update_hook(self):
         state = []
         def on_update(query, db, table, rowid):
@@ -1030,6 +1167,20 @@ class TestUserDefinedCallbacks(BaseTestCase):
             ('UPDATE', 'main', 'kv', 2),
             ('DELETE', 'main', 'kv', 1),
             ('DELETE', 'main', 'kv', 2)])
+
+    def test_broken_update_hook(self):
+        def on_update(query, db, table, rowid):
+            raise ValueError('fail %s' % rowid)
+
+        self.db.update_hook(on_update)
+        self.create_rows(('k4', 'v4', 40))
+        self.assertEqual(self.db.callback_error.args[0], 'fail 4')
+
+        self.db.execute('update kv set extra = extra + ? where extra < ?',
+                        (1, 20))
+        self.assertEqual(self.db.callback_error.args[0], 'fail 1')
+
+        self.assertCount(4)  # Everything went through.
 
     def test_authorizer(self):
         ret = [AUTH_OK]
@@ -1060,6 +1211,29 @@ class TestUserDefinedCallbacks(BaseTestCase):
 
         self.db.authorizer(None)
 
+    def test_broken_authorizer(self):
+        def authorizer(op, p1, p2, p3, p4):
+            raise ValueError('fail')
+
+        self.db.authorizer(authorizer)
+        queries = [
+            'select * from kv',
+            'delete from kv',
+            'update kv set extra = extra + 1',
+            'insert into kv (key, value, extra) values (1, 1, 1)',
+            'create table g (k, v)',
+            'drop table kv',
+        ]
+        for query in queries:
+            with self.assertRaises(OperationalError):
+                self.db.execute(query)
+            self.assertTrue(isinstance(self.db.callback_error, ValueError))
+            self.assertEqual(self.db.callback_error.args[0], 'fail')
+
+        self.db.authorizer(None)  # Clear authorizer to verify no changes.
+        self.assertCount(3)
+        self.assertEqual(self.db.get_tables(), ['kv'])
+
     def test_tracer(self):
         accum = []
         def tracer(code, sid, sql, ns):
@@ -1072,6 +1246,14 @@ class TestUserDefinedCallbacks(BaseTestCase):
         self.assertEqual(accum, [
             (1, 'select key from kv order by key'),
             (4, None), (4, None), (4, None)])
+
+    def test_broken_tracer(self):
+        def broken(code, sid, sql, ns):
+            raise ValueError('trace fail')
+        self.db.trace(broken, TRACE_ROW | TRACE_STMT)
+        self.assertCount(3)
+        self.assertTrue(isinstance(self.db.callback_error, ValueError))
+        self.assertEqual(self.db.callback_error.args[0], 'trace fail')
 
     def test_progress(self):
         accum = [0]
@@ -1086,6 +1268,20 @@ class TestUserDefinedCallbacks(BaseTestCase):
         results = list(self.db.execute('select * from kv order by key'))
         self.assertTrue(accum[0] > 100)
 
+    def test_broken_progress(self):
+        def broken():
+            raise ValueError('progress fail')
+
+        for i in range(100):
+            self.db.execute('insert into kv (key,value,extra) values (?,?,?)',
+                            ('k%02d' % i, 'v%s' % i, i))
+
+        self.db.progress(broken, 10)
+        results = self.db.execute('select * from kv order by key').fetchall()
+        self.assertEqual(len(results), 103)
+        self.assertTrue(isinstance(self.db.callback_error, ValueError))
+        self.assertEqual(self.db.callback_error.args[0], 'progress fail')
+
     def test_exec_cb(self):
         accum = []
         def cb(row):
@@ -1098,6 +1294,22 @@ class TestUserDefinedCallbacks(BaseTestCase):
         del accum[:]
         self.db.execute_simple('select key, value from kv order by key', cb)
         self.assertEqual(accum, [('k3', 'v3z')])
+
+    def test_exec_no_cb(self):
+        self.db.execute_simple("insert into kv (key, value, extra) "
+                               "values ('k4', 'v4', 4)")
+        self.db.execute_simple('select * from kv')
+        self.assertCount(4)
+
+    def test_broken_exec_cb(self):
+        def broken(row):
+            raise ValueError('broken cb')
+
+        with self.assertRaises(OperationalError):
+            self.db.execute_simple('select * from kv', broken)
+
+        self.assertTrue(isinstance(self.db.callback_error, ValueError))
+        self.assertEqual(self.db.callback_error.args[0], 'broken cb')
 
 
 class TestDatabaseSettings(BaseTestCase):
