@@ -1932,6 +1932,83 @@ class Split(TableFunction):
         raise StopIteration
 
 
+class MemoryTable(TableFunction):
+    name = 'memory_store'
+    columns = [
+        ('id', 'INTEGER'),
+        ('key', 'TEXT'),
+        ('value', 'TEXT')]
+    params = []
+
+    _data = {}
+    _next_id = 1
+
+    def initialize(self, **filters):
+        pass
+
+    def iterate(self, idx):
+        keys = sorted(self._data.keys())
+        if idx >= len(keys):
+            raise StopIteration
+
+        rowid = keys[idx]
+        row = self._data[rowid]
+        return (rowid, (row['id'], row['key'], row['value']))
+
+    def insert(self, rowid, values):
+        # rowid might be None, so we auto-generate
+        if rowid is None:
+            rowid = self._next_id
+            MemoryTable._next_id += 1
+        else:
+            rowid = int(rowid)
+            if rowid >= MemoryTable._next_id:
+                MemoryTable._next_id = rowid + 1
+
+        if len(values) < 3:
+            raise ValueError('Expected 3 values, got %s' % len(values))
+
+        u_rowid, key, value = values
+        self._data[rowid] = {
+            'id': int(u_rowid) if u_rowid is not None else rowid,
+            'key': str(key) if key is not None else key,
+            'value': str(value) if value is not None else value,
+        }
+
+        return rowid
+
+    def update(self, old_rowid, new_rowid, values):
+        old_rowid = int(old_rowid)
+        new_rowid = int(new_rowid)
+
+        if old_rowid not in self._data:
+            raise ValueError('Row %s not found' % old_rowid)
+
+        if len(values) < 3:
+            raise ValueError('Expected 3 values, got %s' % len(values))
+
+        uid, key, value = values
+
+        if old_rowid != new_rowid:
+            self._data[new_rowid] = self._data.pop(old_rowid)
+            rowid = new_rowid
+        else:
+            rowid = old_rowid
+
+        if uid:
+            self._data[rowid]['id'] = int(uid)
+        if key is not None:
+            self._data[rowid]['key'] = key
+        if value is not None:
+            self._data[rowid]['value'] = value
+
+    def delete(self, rowid):
+        rowid = int(rowid)
+        if rowid not in self._data:
+            raise ValueError('Row %s not found' % rowid)
+        del self._data[rowid]
+
+
 class TestTableFunction(BaseTestCase):
     def execute(self, sql, params=None):
         return self.db.execute(sql, params or ())
@@ -2040,6 +2117,43 @@ class TestTableFunction(BaseTestCase):
             (2, 4, 'charlie@crappyblog.com'),
             (2, 5, 'huey@example.com'),
         ])
+
+    def test_writeable(self):
+        MemoryTable.register(self.db)
+        curs = self.db.execute('insert into memory_store (id, key, value) '
+                               'values (?, ?, ?)', (1, 'k1', 'v1'))
+        self.assertEqual(curs.lastrowid, 1)
+        self.assertEqual(self.db.last_insert_rowid(), 1)
+
+        curs = self.db.execute('insert into memory_store (key, value) '
+                               'values (?, ?), (?, ?)',
+                               ('k2', 'v2', 'k3', 'v3'))
+        self.assertEqual(curs.lastrowid, 3)
+        self.assertEqual(self.db.last_insert_rowid(), 3)
+
+        def assertValues(*expected):
+            res = self.db.execute('select * from memory_store order by key')
+            self.assertEqual(res.fetchall(), list(expected))
+
+        assertValues((1, 'k1', 'v1'), (2, 'k2', 'v2'), (3, 'k3', 'v3'))
+
+        curs = self.db.execute('update memory_store set value = ? '
+                               'where key = ?', ('v2y', 'k2'))
+        assertValues((1, 'k1', 'v1'), (2, 'k2', 'v2y'), (3, 'k3', 'v3'))
+
+        self.db.execute('update memory_store set value = value || ?', ('zz',))
+        self.db.execute('update memory_store set value = NULL where key = ?',
+                        ('xyz',))
+        assertValues((1, 'k1', 'v1zz'), (2, 'k2', 'v2yzz'), (3, 'k3', 'v3zz'))
+
+        self.db.execute('delete from memory_store where key = ?', ('k2',))
+        assertValues((1, 'k1', 'v1zz'), (3, 'k3', 'v3zz'))
+
+        self.db.execute('delete from memory_store where key = ?', ('k2',))
+        assertValues((1, 'k1', 'v1zz'), (3, 'k3', 'v3zz'))
+
+        self.db.execute('delete from memory_store')
+        assertValues()
 
     def test_error_instantiate(self):
         class BrokenInstantiate(Series):

@@ -333,7 +333,7 @@ cdef extern from "sqlite3.h" nogil:
         int (*xColumn)(sqlite3_vtab_cursor*, sqlite3_context *, int)
         int (*xRowid)(sqlite3_vtab_cursor*, sqlite3_int64 *pRowid)
         int (*xUpdate)(sqlite3_vtab *pVTab, int, sqlite3_value **,
-                       sqlite3_int64 **)
+                       sqlite3_int64 *)
         int (*xBegin)(sqlite3_vtab *pVTab)
         int (*xSync)(sqlite3_vtab *pVTab)
         int (*xCommit)(sqlite3_vtab *pVTab)
@@ -379,7 +379,7 @@ cdef extern from "sqlite3.h" nogil:
     cdef int sqlite3_busy_timeout(sqlite3*, int ms)
     #cdef int sqlite3_get_table(sqlite3 *db, const char *zSql, char ***pazResult, int *pnRow, int *pnColumn, char **pzErrmsg)
     #cdef void sqlite3_free_table(char **result)
-    #cdef char *sqlite3_mprintf(const char*,...)
+    cdef char *sqlite3_mprintf(const char*,...)
     #cdef char *sqlite3_vmprintf(const char*, va_list)
     #cdef char *sqlite3_snprintf(int,char*,const char*, ...)
     #cdef char *sqlite3_vsnprintf(int,char*,const char*, va_list)
