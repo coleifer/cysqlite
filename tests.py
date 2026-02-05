@@ -41,6 +41,8 @@ VAL_CONVERSION_TESTS = [
     (False, 0),
     (datetime.datetime(2026, 1, 2, 3, 4, 5), '2026-01-02 03:04:05'),
     (datetime.date(2026, 2, 3), '2026-02-03'),
+    (datetime.datetime(1, 1, 1, 0, 0, 0), '0001-01-01 00:00:00'),
+    (datetime.datetime(9999, 12, 31, 23, 59, 59), '9999-12-31 23:59:59'),
     (Decimal('1.23'), 1.23),
     (Fraction(3, 5), 0.6),
     (_mv, bytes(_buf[1:])),
@@ -342,6 +344,16 @@ class TestExecute(BaseTestCase):
 
         res = self.db.execute('select data from k order by id').fetchall()
         self.assertEqual([val for val, in res], VAL_TESTS)
+
+    def test_special_floats(self):
+        self.db.execute('create table g (id integer primary key, v real)')
+        self.db.execute('insert into g values (?, ?)', (1, float('inf'),))
+        self.db.execute('insert into g values (?, ?)', (2, float('nan'),))
+        curs = self.db.execute('select v from g order by id')
+        v1, = curs.fetchone()
+        v2, = curs.fetchone()
+        self.assertEqual(v1, float('inf'))
+        self.assertTrue(v2 is None)  # NaN doesn't seem to come through.
 
     def test_execute_special_types(self):
         self.db.execute('create table k (id integer primary key, data)')
@@ -732,6 +744,34 @@ class TestTransactions(BaseTestCase):
 
         curs = self.db.execute('select key from kv order by key')
         self.assertEqual([row for row, in curs], ['k2'])
+
+    def test_no_nested_transaction(self):
+        # Sqlite doesn't allow nested transactions - we check tx depth, though,
+        # so we end up doing the right thing.
+        with self.db.transaction() as txn:
+            with self.db.transaction() as txn2:
+                self.create_rows(('k1', 'v1', 1))
+            txn.rollback()
+        self.assertCount(0)
+
+        with self.db.transaction() as txn:
+            with self.db.transaction() as txn2:
+                self.create_rows(('k1', 'v1', 1))
+                txn2.rollback()
+        self.assertCount(0)
+
+        with self.db.transaction() as txn:
+            with self.db.transaction() as txn2:
+                self.create_rows(('k1', 'v1', 1))
+            txn.commit()
+        self.assertCount(1)
+
+        with self.db.transaction() as txn:
+            with self.db.transaction() as txn2:
+                self.create_rows(('k2', 'v2', 2))
+                txn2.commit()
+            txn.rollback()
+        self.assertCount(2)
 
     def test_transaction_handling(self):
         with self.db.atomic() as txn:
@@ -1533,6 +1573,29 @@ class TestStatementUsage(BaseTestCase):
         self.assertTrue(curs2.fetchone() is None)
         self.assertEqual(self.db.get_stmt_usage(), (3, 0))
 
+    def test_statement_exhaustion(self):
+        self.db.cached_statements = 10
+        self.create_table()
+        self.create_rows(('k1', 'v1', 1), ('k2', 'v2', 2))
+        cursors = []
+        for i in range(100):
+            cursor = self.db.execute('select key from kv order by key')
+            cursors.append(cursor)
+            self.assertEqual(self.db.get_stmt_usage(), (2, i + 1))
+
+        for cursor in cursors:
+            self.assertEqual(cursor.fetchall(), [('k1',), ('k2',)])
+
+        self.assertEqual(self.db.get_stmt_usage(), (3, 0))
+
+    def test_statement_cache_fill(self):
+        self.db.cached_statements = 10
+        self.db.execute('create table g(k)')
+        for i in range(20):
+            self.db.execute('insert into g(k) values (%s)' % i)
+        self.assertEqual(self.db.get_stmt_usage(), (10, 0))
+        self.assertEqual(self.db.execute('select count(*) from g').value(), 20)
+
     def test_statement_after_close(self):
         curs = self.db.execute('select 1')
         self.db.close()
@@ -1745,6 +1808,46 @@ class TestThreading(BaseTestCase):
 
         self.run_concurrent(work)
         self.assertCount(self.threads + self.threads + 3)
+
+
+class TestLargeValues(BaseTestCase):
+    filename = ':memory:'
+
+    def setUp(self):
+        super(TestLargeValues, self).setUp()
+        self.db.execute('create table g (id integer not null primary key, '
+                        'value text not null)')
+
+    def assertCount(self, ct):
+        self.assertEqual(self.db.execute('select count(*) from g').value(), ct)
+
+    def test_large_insert_select(self):
+        data = [(i, 'v%08d' % i) for i in range(10000)]
+        self.db.executemany('insert into g (id, value) values (?, ?)', data)
+        self.assertCount(10000)
+
+        params = ', '.join(['(?, ?)'] * 100)
+        data = []
+        for i in range(10000, 10100):
+            data.extend((i, 'v%08d' % i))
+        self.db.execute('insert into g values %s' % params, data)
+        self.assertCount(10100)
+
+        res = self.db.execute('select * from g').fetchall()
+        self.assertEqual(len(res), 10100)
+
+    def test_large_column_list(self):
+        columns = ', '.join(['col%d' % i for i in range(100)])
+        self.db.execute(f'CREATE TABLE test (%s)' % columns)
+
+        params = ', '.join(['?' for _ in range(100)])
+        self.db.execute('INSERT INTO test VALUES (%s)' % params,
+                        list(range(100)))
+
+        curs = self.db.execute('SELECT * FROM test')
+        self.assertEqual(len(curs.fetchone()), 100)
+        self.assertEqual(curs.description,
+                         tuple(('col%d' % i,) for i in range(100)))
 
 #
 # Helpers, addons, etc.
