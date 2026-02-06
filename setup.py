@@ -40,11 +40,11 @@ if os.path.exists('sqlite3.c') and os.path.exists('sqlite3.h'):
         ('SQLITE_ENABLE_UPDATE_DELETE_LIMIT', 1),
         ('SQLITE_SOUNDEX', 1),
         ('SQLITE_USE_URI', 1),
-        ('SQLITE_TEMP_STORE', 3),
         ('SQLITE_MAX_VARIABLE_NUMBER', 250000),
         ('SQLITE_MAX_MMAP_SIZE', 2**40),
         ('inline', '__inline'),
     ]
+
     if os.environ.get('SQLCIPHER'):
         define_macros.extend([
             ('SQLITE_HAS_CODEC', '1'),
@@ -60,6 +60,11 @@ if os.path.exists('sqlite3.c') and os.path.exists('sqlite3.h'):
                 'USER32.LIB', 'libcrypto.lib'])
         else:
             link_args.extend(['-lcrypto'])
+    else:
+        define_macros.extend([
+            ('SQLITE_TEMP_STORE', 3),
+        ])
+
 else:
     include_dirs = []
     libraries = ['sqlite3']
