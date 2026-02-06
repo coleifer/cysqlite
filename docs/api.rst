@@ -18,8 +18,7 @@ Module
 
    :param database: database filename or ``':memory:'`` for an in-memory database.
    :type database: str, ``pathlib.Path``
-   :param int flags: ``sqlite_open`` flags, e.g. :py:attr:`C_SQLITE_OPEN_READONLY`.
-       Multiple flags can be combined with bitwise-or ``|``. See :ref:`sqlite-connection-flags`.
+   :param int flags: control how database is opened. See :ref:`sqlite-connection-flags`.
    :param float timeout: seconds to retry acquiring write lock before raising
        a :py:class:`OperationalError` when table is locked.
    :param str vfs: VFS to use, optional.
@@ -30,6 +29,10 @@ Module
    :param bool autoconnect: Open connection when instantiated.
    :return: Connection to database.
    :rtype: :py:class:`Connection`
+
+   Default flags are ``SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE``. If ``uri``
+   is set **or** ``'://'`` occurs in the database name, ``SQLITE_OPEN_URI``
+   will be included.
 
    Example:
 
@@ -58,8 +61,7 @@ Connection
 
    :param database: database filename or ``':memory:'`` for an in-memory database.
    :type database: str, ``pathlib.Path``
-   :param int flags: ``sqlite_open`` flags, e.g. :py:attr:`C_SQLITE_OPEN_READONLY`.
-       Multiple flags can be combined with bitwise-or ``|``. See :ref:`sqlite-connection-flags`.
+   :param int flags: control how database is opened. See :ref:`sqlite-connection-flags`.
    :param float timeout: seconds to retry acquiring write lock before giving up.
    :param str vfs: VFS to use, optional.
    :param bool uri: Allow connecting using a URI.
@@ -67,6 +69,74 @@ Connection
    :param bool extensions: Support run-time loadable extensions.
    :param row_factory: Factory implementation for constructing rows.
    :param bool autoconnect: Open connection when instantiated.
+
+   Default flags are ``SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE``. If ``uri``
+   is set **or** ``'://'`` occurs in the database name, ``SQLITE_OPEN_URI``
+   will be included.
+
+   .. py:method:: connect()
+
+      Open connection to the database.
+
+      :return: ``True`` if database was previously closed and is now open. If
+          database was already open returns ``False``.
+      :rtype: bool
+      :raises: :py:class:`OperationalError` if opening database fails.
+
+   .. py:method:: close()
+
+      Close the database, finalizing all cursors and other hooks and handles
+      associated with the active connection.
+
+      :return: ``True`` if database was previously open and is now closed. If
+          database was already closed returns ``False``.
+      :rtype: bool
+      :raises: :py:class:`OperationalError` if transaction is still active or
+          an error occurs while closing the connection.
+
+   .. py:method:: is_closed()
+
+      :return: whether database is currently closed.
+      :rtype: bool
+
+   .. py:method:: cursor()
+
+      Create a reusable cursor for executing queries.
+
+      :return: a cursor for executing queries.
+      :rtype: :py:class:`Cursor`
+
+      .. note::
+          The use of :py:meth:`~Connection.cursor` is optional. There is no
+          performance difference between creating a cursor and calling
+          :py:meth:`Cursor.execute` versus calling :py:meth:`Connection.execute`,
+          as the latter will create and return a :py:class:`Cursor`.
+
+   .. py:method:: execute(sql, params=None)
+
+   .. py:method:: executemany(sql, seq_of_params)
+
+   .. py:method:: execute_one(sql, params=None)
+
+   .. py:method:: execute_scalar(sql, params=None)
+
+   .. py:method:: begin(lock=None)
+
+   .. py:method:: commit()
+
+   .. py:method:: rollback()
+
+   .. py:method:: changes()
+
+   .. py:method:: total_changes()
+
+   .. py:method:: last_insert_rowid()
+
+   .. py:method:: interrupt()
+
+   .. py:method:: autocommit()
+
+   .. py:property:: in_transaction
 
    .. py:method:: status(flag)
 
@@ -77,6 +147,10 @@ Connection
       :rtype: tuple
 
       .. seealso:: :ref:`sqlite-status-flags`
+
+   .. py:method:: pragma(key, value=SENTINEL, database=None)
+
+   .. py:method:: get_tables(database=None)
 
    .. py:method:: authorizer(fn)
 
