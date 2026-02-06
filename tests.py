@@ -273,8 +273,8 @@ class TestExecute(BaseTestCase):
         row = self.db.execute_one('select * from g where k = ?', ('k2',))
         self.assertEqual(row, ('k2', 2))
 
-        row = self.db.execute_one('select sum(v) from g')
-        self.assertEqual(row, (6,))
+        res = self.db.execute_scalar('select sum(v) from g')
+        self.assertEqual(res, 6)
 
         curs = self.db.execute('select sum(v) from g')
         self.assertEqual(curs.value(), 6)
@@ -477,8 +477,8 @@ class TestQueryExecution(BaseTestCase):
         self.assertEqual(curs.rowcount, 2)
         self.assertEqual(sorted(curs.fetchall()), [('k1', 11), ('k2', 21)])
 
-        self.assertEqual(self.db.execute_one('select sum(extra) from kv'),
-                         (62,))
+        self.assertEqual(self.db.execute_scalar('select sum(extra) from kv'),
+                         62)
 
         curs = self.db.execute(sql, ('k2', 'k3'))
         self.assertEqual(curs.rowcount, 2)
@@ -2372,8 +2372,8 @@ class TestMedianUDF(BaseTestCase):
         self.db.execute('insert into g(x) values %s' % expr, values)
 
     def assertMedian(self, expected):
-        row = self.db.execute_one('select median(x) from g')
-        self.assertEqual(row[0], expected)
+        res = self.db.execute_scalar('select median(x) from g')
+        self.assertEqual(res, expected)
 
     def test_median_aggregate(self):
         self.assertMedian(None)

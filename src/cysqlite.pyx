@@ -812,10 +812,12 @@ cdef class Connection(_callable_context_manager):
 
     def execute_one(self, sql, params=None):
         cdef Cursor c = self.execute(sql, params)
-        try:
-            return next(c)
-        except StopIteration:
-            return
+        return c.fetchone()
+
+    def execute_scalar(self, sql, params=None):
+        cdef Cursor c = self.execute(sql, params)
+        res = c.fetchone()
+        return res[0] if res else None
 
     def execute_simple(self, sql, callback=None):
         check_connection(self)
