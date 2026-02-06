@@ -1,0 +1,49 @@
+.. cysqlite documentation master file, created by
+   sphinx-quickstart on Fri Feb  6 13:31:16 2026.
+   You can adapt this file completely to your liking, but it should at least
+   contain the root `toctree` directive.
+
+cysqlite documentation
+======================
+
+cysqlite provides performant bindings to SQLite. cysqlite aims to be roughly
+compatible with the behavior of the standard lib ``sqlite3`` module, but are
+closer in spirit to ``apsw``, just with fewer features.
+
+cysqlite supports standalone builds or dynamic-linking with the system SQLite.
+
+.. note::
+   If you are looking for a SQLite driver that "just works" wherever your
+   application will be used or installed (e.g. you are a library developer),
+   the standard lib ``sqlite3`` is the best choice.
+
+   If you are looking for a SQLite driver which exposes the full surface-area
+   of SQLite APIs, ``apsw`` is the best choice.
+
+Example usage:
+
+.. code-block:: python
+
+    from cysqlite import connect
+
+    db = connect(':memory:')
+
+    db.execute('create table data (k, v)')
+
+    with db.atomic():
+        db.executemany('insert into data (k, v) values (?, ?)',
+                       [(f'k{i:02d}', f'v{i:02d}') for i in range(10)])
+        print(db.last_insert_rowid())  # 10.
+
+    curs = db.execute('select * from data')
+    for row in curs:
+        print(row)  # e.g., ('k00', 'v00')
+
+    db.close()
+
+.. toctree::
+   :maxdepth: 2
+   :glob:
+   :caption: Contents:
+
+   installation
