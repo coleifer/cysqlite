@@ -1303,6 +1303,10 @@ cdef class Connection(_callable_context_manager):
         check_connection(self)
         self.execute_one('attach database "%s" as "%s"' % (filename, name))
 
+    def detach(self, name):
+        check_connection(self)
+        self.execute_one('detach database "%s"' % name)
+
     def database_list(self):
         check_connection(self)
         return [(row[1], row[2])

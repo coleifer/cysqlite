@@ -152,6 +152,44 @@ Connection
 
    .. py:method:: get_tables(database=None)
 
+   .. py:method:: get_views(database=None)
+
+   .. py:method:: get_indexes(table, database=None)
+
+   .. py:method:: get_columns(table, database=None)
+
+   .. py:method:: get_primary_keys(table, database=None)
+
+   .. py:method:: get_foreign_keys(table, database=None)
+
+   .. py:method:: table_column_metadata(table, column, database=None)
+
+   .. py:method:: transaction(lock=None)
+
+   .. py:method:: savepoint(sid=None)
+
+   .. py:method:: atomic(sid=None)
+
+   .. py:method:: backup(dest, pages=None, name=None, progress=None, src_name=None)
+
+   .. py:method:: backup_to_file(filename, pages=None, name=None, progress=None, src_name=None)
+
+   .. py:method:: blob_open(table, column, rowid, read_only=False, dbname=None)
+
+   .. py:method:: create_function(fn, name=None, nargs=-1, deterministic=True)
+
+   .. py:method:: create_aggregate(agg, name=None, nargs=-1, deterministic=True)
+
+   .. py:method:: create_window_function(agg, name=None, nargs=-1, deterministic=True)
+
+   .. py:method:: create_collation(fn, name)
+
+   .. py:method:: commit_hook(fn)
+
+   .. py:method:: rollback_hook(fn)
+
+   .. py:method:: update_hook(fn)
+
    .. py:method:: authorizer(fn)
 
       :param fn: authorizer callback
@@ -159,6 +197,27 @@ Connection
           :py:attr:`C_SQLITE_DENY`.
 
       .. seealso:: :ref:`authorizer-flags`
+
+   .. py:method:: trace(fn, mask=2)
+
+   .. py:method:: progress(fn, n=1)
+
+   .. py:method:: set_busy_handler(timeout=5.0)
+
+   .. py:method:: optimize(debug=False, run_tables=True, set_limit=True, check_table_sizes=False, dry_run=False)
+
+   .. py:method:: attach(filename, name)
+
+   .. py:method:: detach(name)
+
+   .. py:method:: database_list()
+
+   .. py:method:: set_main_db_name(name)
+
+   .. py:method:: set_autocheckpoint(n)
+
+   .. py:method:: checkpoint(full=False, truncate=False, name=None)
+
 
 Exceptions
 ----------
