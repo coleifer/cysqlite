@@ -705,7 +705,7 @@ cdef class Connection(_callable_context_manager):
 
         cdef int rc = sqlite3_close_v2(self.db)
         if rc != SQLITE_OK:
-            raise OperationalError('error closing database: %s' % rc)
+            raise InternalError('error closing database: %s' % rc)
 
         self.db = NULL
         return True
@@ -742,7 +742,7 @@ cdef class Connection(_callable_context_manager):
                 errmsg = decode(sqlite3_errmsg(self.db))
                 sqlite3_close_v2(self.db)
                 self.db = NULL
-                raise OperationalError('could not enable extensions: %s' % errmsg)
+                raise InternalError('could not enable extensions: %s' % errmsg)
 
         cdef int timeout_ms = int(self.timeout * 1000)
         rc = sqlite3_busy_timeout(self.db, timeout_ms)

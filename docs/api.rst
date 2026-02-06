@@ -86,6 +86,68 @@ Connection
 
       .. seealso:: :ref:`authorizer-flags`
 
+Exceptions
+----------
+
+Exceptions follow the `DB-API 2.0 <https://peps.python.org/pep-0249/>`_
+exception hierarchy.
+
+.. py:class:: SqliteError
+
+   Exception that is the base class of all other error exceptions. You can use
+   this to catch all errors with one single except statement.
+
+.. py:class:: InterfaceError
+
+   Exception raised for errors that are related to the database interface
+   rather than the database itself.
+
+   *Currently not used.*
+
+.. py:class:: DatabaseError
+
+   Exception raised for errors that are related to the database. The following
+   exception classes are all drived from :py:class:`DatabaseError`.
+
+.. py:class:: DataError
+
+   Exception raised for errors that are due to problems with the processed data
+   like division by zero, numeric value out of range, etc.
+
+   *Currently not used.*
+
+.. py:class:: OperationalError
+
+   Exception raised for errors that are related to the database’s operation.
+   Raised in most cases for errors when working with the database.
+
+   **Corresponds to most SQLite error codes.**
+
+.. py:class:: IntegrityError
+
+   Exception raised when the relational integrity of the database is affected,
+   e.g. a foreign key check fails or a unique constraint fails.
+
+   Corresponds to ``SQLITE_CONSTRAINT`` errors.
+
+.. py:class:: InternalError
+
+   Exception raised when the database encounters an internal error.
+
+   Corresponds to ``SQLITE_INTERNAL`` errors.
+
+.. py:class:: ProgrammingError
+
+   Exception raised for programming errors.
+
+.. py:class:: NotSupportedError
+
+   Exception raised in case a method or database API was used which is not
+   supported by the database.
+
+   *Currently not used.*
+
+
 Constants
 ---------
 
