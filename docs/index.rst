@@ -43,7 +43,7 @@ Example usage:
 
 .. toctree::
    :maxdepth: 2
-   :glob:
    :caption: Contents:
 
    installation
+   api

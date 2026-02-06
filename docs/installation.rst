@@ -6,21 +6,22 @@ Installation
 cysqlite can be installed as a pre-built binary wheel with SQLite embedded into
 the module:
 
-.. code-block:: console
+.. code-block:: shell
+    :emphasize-lines: 1
 
-   pip install cysqlite
+    pip install cysqlite
 
 cysqlite can be installed from a source distribution (sdist) which will link
 against the system SQLite:
 
-.. code-block:: console
+.. code-block:: shell
 
     # Link against the system sqlite.
     pip install --no-binary :all: cysqlite
 
 To install the very latest commit:
 
-.. code-block:: console
+.. code-block:: shell
 
     # (note: links against system sqlite)
     pip install -e git+https://github.com/coleifer/cysqlite.git#egg=cysqlite
@@ -33,7 +34,7 @@ of the `SQLite release <https://www.sqlite.org/chronology.html>`_ you intend to
 use. Then extract or copy the `sqlite3.c` and `sqlite3.h` files into the root
 of your `cysqlite` checkout and build:
 
-.. code-block:: console
+.. code-block:: shell
 
     # Obtain SQLite source amalgamation.
     wget -O sqlite.zip https://www.sqlite.org/2026/sqlite-amalgamation-3510200.zip
@@ -54,7 +55,7 @@ of your `cysqlite` checkout and build:
 For convenience cysqlite includes a script to fetch the latest source
 amalgamation and place the sources into the root of your checkout:
 
-.. code-block:: console
+.. code-block:: shell
 
     # Obtain checkout of cysqlite.
     git clone https://github.com/coleifer/cysqlite
@@ -75,7 +76,7 @@ At the time of writing SQLCipher does not provide a source amalgamation, so
 cysqlite includes a script to build an amalgamation and place the sources into
 the root of your checkout:
 
-.. code-block:: console
+.. code-block:: shell
 
     # Obtain checkout of cysqlite.
     git clone https://github.com/coleifer/cysqlite
@@ -89,7 +90,7 @@ the root of your checkout:
 
 Building the SQLCipher amalgamation yourself:
 
-.. code-block:: console
+.. code-block:: shell
 
     # Obtain SQLCipher source code.
     git clone https://github.com/sqlcipher/sqlcipher
