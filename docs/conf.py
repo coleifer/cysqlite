@@ -25,3 +25,8 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
 html_theme = 'alabaster'
 html_static_path = ['_static']
+html_theme_options = {
+    'github_user': 'coleifer',
+    'github_repo': 'cysqlite',
+    'page_width': '1000px',
+}

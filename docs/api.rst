@@ -137,6 +137,8 @@ Connection
       :return: a cursor for executing queries.
       :rtype: :class:`Cursor`
 
+      .. seealso:: :class:`Cursor`
+
       .. note::
           The use of :meth:`~Connection.cursor` is optional. There is no
           performance difference between creating a cursor and calling
@@ -154,6 +156,28 @@ Connection
       :return: cursor object.
       :rtype: :class:`Cursor`
 
+      Example:
+
+      .. code-block:: python
+
+         db.execute('create table kv ("id" integer primary key, "key", "value")')
+
+         # Iterate over results from a bulk-insert.
+         curs = db.execute('insert into kv (key, value) values (?, ?), (?, ?) '
+                           'returning id, key', ('k1', 'v1', 'k2', 'v2'))
+         for (i, k) in curs:
+             print(f'inserted {k} with id={i}')
+
+         # Retrieve a single row result.
+         curs = db.execute('select * from kv where id = ?', (1, ))
+         row = curs.fetchone()
+         print(f'retrieved row 1: {row}')
+
+         # Empty result set.
+         curs = db.execute('select * from kv where id = 0')
+         assert curs.fetchone() is None
+         assert curs.fetchall() == []
+
    .. method:: executemany(sql, seq_of_params)
 
       Create a new :class:`Cursor` and call :meth:`~Cursor.executemany` with
@@ -169,6 +193,18 @@ Connection
       :return: cursor object.
       :rtype: :class:`Cursor`
 
+      Example:
+
+      .. code-block:: python
+
+         db.execute('create table kv ("id" integer primary key, "key", "value")')
+
+         # Iterate over results from a bulk-insert.
+         curs = db.executemany('insert into kv (key, value) values (?, ?)',
+                               [('k1', 'v1'), ('k2', 'v2'), ('k3', 'v3')])
+         print(curs.lastrowid)  # 3.
+         print(curs.rowcount)  # 3.
+
    .. method:: execute_one(sql, params=None)
 
       Create a new :class:`Cursor` and call :meth:`~Cursor.execute` with the
@@ -178,6 +214,12 @@ Connection
       :param params: parameters for query (optional).
       :type params: tuple, list, sequence, or ``None``.
       :return: a single row of data or ``None`` if no results.
+
+      Example:
+
+      .. code-block:: python
+
+         row = db.execute_one('select * from users where id = ?', (1,))
 
    .. method:: execute_scalar(sql, params=None)
 
@@ -190,6 +232,10 @@ Connection
       :param params: parameters for query (optional).
       :type params: tuple, list, sequence, or ``None``.
       :return: a single value or ``None`` if no result.
+
+      .. code-block:: python
+
+         count = db.execute_scalar('select count(*) from users')
 
    .. method:: begin(lock=None)
 
@@ -211,6 +257,18 @@ Connection
           savepoint) will automatically be used.
 
           See :meth:`Connection.atomic` for details.
+
+      .. code-block:: python
+
+         db = connect(':memory:')
+
+         assert db.autocommit()  # Autocommit mode by default.
+
+         db.begin()  # Now we are in a transaction.
+         assert not db.autocommit()
+         db.commit()
+
+         assert db.autocommit()  # Back in autocommit mode.
 
    .. method:: commit()
 
@@ -234,6 +292,22 @@ Connection
       currently active).
 
       :rtype: bool
+
+      .. code-block:: python
+
+         db = connect(':memory:')
+
+         # We are in autocommit-mode by default.
+         assert db.autocommit()
+
+         db.begin()
+         assert not db.autocommit()  # We are in a transaction.
+         db.commit()
+
+         with db.atomic():
+             assert not db.autocommit()  # In a transaction.
+
+         assert db.autocommit()  # Back in autocommit mode.
 
    .. property:: in_transaction
 
@@ -380,6 +454,19 @@ Connection
       :rtype: tuple
 
       .. seealso:: :ref:`sqlite-status-flags`
+
+      Example:
+
+      .. code-block:: python
+
+         db = connect('app.db')
+
+         # Execute a query.
+         db.execute('select * from register').fetchall()
+
+         # Get the page cache used.
+         print(db.status(C_SQLITE_STATUS_PAGECACHE_USED))
+         # (123456, 0)
 
    .. method:: pragma(key, value=SENTINEL, database=None, multi=False)
 
@@ -578,6 +665,19 @@ Connection
          # Backup the contents of master to replica.
          master.backup(replica)
 
+      Progress example:
+
+      .. code-block:: python
+
+         master = connect('master.db')
+         replica = connect('replica.db')
+
+         def progress(remaining, total, is_complete):
+             print(f'{remaining}/{total} pages remaining')
+
+         # Backup the contents of master to replica.
+         master.backup(replica, pages=10, progress=progress)
+
    .. method:: backup_to_file(filename, pages=None, name=None, progress=None, src_name=None)
 
       Perform an online backup to the given destination file.
@@ -616,6 +716,31 @@ Connection
 
          The blob size cannot be changed using the :class:`Blob` class.
          Use the SQL function ``zeroblob`` to create a blob with a fixed size.
+
+      .. seealso:: :class:`Blob`
+
+      Example:
+
+      .. code-block:: python
+
+         db.execute('create table register ('
+                    'id integer primary key, '
+                    'data blob not null)')
+
+         # Create a row with a 16-byte empty blob.
+         db.execute('insert into register (data) values (zeroblob(?))', (16,))
+         rowid = db.last_insert_rowid()
+
+         # Obtain a handle to access the BLOB.
+         blob = db.blob_open('register', 'data', rowid)
+
+         blob.write(b'abcdefgh')
+         assert blob.tell() == 8
+
+         blob.seek(2)
+         print(blob.read(4))  # b'cdef'
+
+         blob.close()  # Release the blob handle.
 
    .. method:: create_function(fn, name=None, nargs=-1, deterministic=True)
 
@@ -844,7 +969,7 @@ Connection
              # e.g. INSERT row 3 into table users.
              logger.info('%s row %s into table %s', query_type, rowid, table)
 
-         conn.update_hook(on_update)
+         db.update_hook(on_update)
 
    .. method:: authorizer(fn)
 
@@ -874,6 +999,23 @@ Connection
       * :data:`C_SQLITE_IGNORE`: allow statement compilation but prevent
         the operation from occuring.
       * :data:`C_SQLITE_DENY`: prevent statement compilation.
+
+      Only a single authorizer can be in place on a database connection at a time.
+
+      Example:
+
+      .. code-block:: python
+
+         # Prevent any updates to the log table.
+         def prevent_updating_log(op, p1, p2, p3, p4):
+             if op == C_SQLITE_UPDATE and p1 == 'log':
+                 return C_SQLITE_DENY
+             return C_SQLITE_OK
+
+         db.authorizer(prevent_updating_log)
+
+         # raises OperationalError - not authorized (code=23).
+         db.execute('update log set status=? where id=?', (0, 1))
 
    .. method:: trace(fn, mask=2)
 
@@ -907,6 +1049,29 @@ Connection
       Callback takes zero arguments and returns ``0`` to allow progress to
       continue or any non-zero value to interrupt progress.
 
+      Example:
+
+      .. code-block:: python
+
+         def allow_interrupt():
+             if halt_requested:
+                 return 1  # Triggers an interrupt.
+             return C_SQLITE_OK
+
+         # Install our progress handler.
+         db.progress(allow_interrupt)
+
+         # Begin a very long database operation, allow the user to interrupt.
+         try:
+             with db.atomic():
+                 db.execute(...)
+         except OperationalError:
+             # e.g. OperationalError: interrupted, code=9
+             print('Query was interrupted.')
+
+         # Remove the progress handler.
+         db.progress(None)
+
    .. method:: set_busy_handler(timeout=5.0)
 
       :param float timeout: seconds to retry acquiring write lock before raising
@@ -937,10 +1102,26 @@ Connection
 
       :param str filename: database filename.
       :param str name: name for attached database.
+      :raises: :class:`OperationalError` if database could not be attached.
+
+      Example:
+
+      .. code-block:: python
+
+         db.attach('/path/to/secondary.db', 'secondary')
+
+         curs = db.execute('select * from secondary.some_table')
 
    .. method:: detach(name)
 
       :param str name: name of attached database to disconnect.
+      :raises: :class:`OperationalError` if database not attached.
+
+      Example:
+
+      .. code-block:: python
+
+         db.detach('secondary')
 
    .. method:: database_list()
 
