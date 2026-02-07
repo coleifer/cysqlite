@@ -24,7 +24,7 @@ Module
    :param bool uri: Allow connecting using a URI.
    :param int cached_statements: Size of statement cache.
    :param bool extensions: Support run-time loadable extensions.
-   :param row_factory: Factory implementation for constructing rows.
+   :param row_factory: Factory implementation for constructing rows, e.g. :class:`Row`
    :param bool autoconnect: Open connection when instantiated.
    :return: Connection to database.
    :rtype: :class:`Connection`
@@ -98,12 +98,17 @@ Connection
    :param bool uri: Allow connecting using a URI.
    :param int cached_statements: Size of statement cache.
    :param bool extensions: Support run-time loadable extensions.
-   :param row_factory: Factory implementation for constructing rows.
+   :param row_factory: Factory implementation for constructing rows, e.g. :class:`Row`
    :param bool autoconnect: Open connection when instantiated.
 
    Default flags are ``SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE``. If ``uri``
    is set **or** ``'://'`` occurs in the database name, ``SQLITE_OPEN_URI``
    will be included.
+
+   .. attribute:: row_factory
+
+      Factory for creating row instances from query results, e.g. :class:`Row`.
+      By default rows are returned as ``tuple`` instances.
 
    .. method:: connect()
 
@@ -1145,6 +1150,145 @@ Connection
 
       See `sqlite3_wal_checkpoint_v2 <https://sqlite.org/c3ref/wal_checkpoint_v2.html>`_
       for details on the parameters and their behavior.
+
+Cursor
+------
+
+.. class:: Cursor(conn)
+
+   Cursors are created by calling :meth:`Connection.cursor` or by executing a
+   query with :meth:`Connection.execute`.
+
+   :param Connection conn: connection the cursor is bound to.
+
+   .. method:: execute(sql, params=None)
+
+      Execute the given *sql* and *params*.
+
+      :param str sql: SQL query to execute.
+      :param params: parameters for query (optional).
+      :type params: tuple, list, sequence, or ``None``.
+      :return: self
+      :rtype: :class:`Cursor`
+
+      Example:
+
+      .. code-block:: python
+
+         curs = db.cursor()
+
+         curs.execute('create table kv ("id" integer primary key, "key", "value")')
+
+         # Iterate over results from a bulk-insert.
+         curs.execute('insert into kv (key, value) values (?, ?), (?, ?) '
+                      'returning id, key', ('k1', 'v1', 'k2', 'v2'))
+         for (i, k) in curs:
+             print(f'inserted {k} with id={i}')
+
+         # Retrieve a single row result.
+         curs.execute('select * from kv where id = ?', (1, ))
+         row = curs.fetchone()
+         print(f'retrieved row 1: {row}')
+
+         # Empty result set.
+         curs.execute('select * from kv where id = 0')
+         assert curs.fetchone() is None
+         assert curs.fetchall() == []
+
+   .. method:: executemany(sql, seq_of_params)
+
+      Execute the given *sql* repeatedly for each parameter group in *seq_of_params*.
+
+      Queries executed by :meth:`~Connection.executemany` must not return any
+      result rows, or this will result in an :class:`OperationalError`.
+
+      :param str sql: SQL query to execute.
+      :param seq_of_params: iterable of parameters to repeatedly execute the
+        query with.
+      :type params: tuple, list, or sequence.
+      :return: self
+      :rtype: :class:`Cursor`
+
+      Example:
+
+      .. code-block:: python
+
+         curs = db.cursor()
+
+         curs.execute('create table kv ("id" integer primary key, "key", "value")')
+
+         # Iterate over results from a bulk-insert.
+         curs.executemany('insert into kv (key, value) values (?, ?)',
+                          [('k1', 'v1'), ('k2', 'v2'), ('k3', 'v3')])
+         print(curs.lastrowid)  # 3.
+         print(curs.rowcount)  # 3.
+
+   .. method:: __iter__()
+               __next__()
+
+      Cursors support the iterator protocol.
+
+      Example:
+
+      .. code-block:: python
+
+         curs = db.execute('select username from users')
+         for row in curs:
+             print(row[0])
+
+   .. method:: fetchone()
+
+      Return the next row from the query result set. By default rows are
+      returned as ``tuple``, but row type can be controlled by setting
+      :attr:`Connection.row_factory`.
+
+      If no results are available or cursor has been consumed returns ``None``.
+
+      Example:
+
+      .. code-block:: python
+
+         curs = db.execute('select 1')
+         print(curs.fetchone())  # (1,)
+         print(curs.fetchone())  # None
+
+   .. py:method:: fetchall()
+
+      Fetch all rows from the query result set. By default rows are returned as
+      ``tuple``, but row type can be controlled by setting
+      :attr:`Connection.row_factory`.
+
+      If no results are available or cursor has been consumed returns ``[]``.
+
+      Example:
+
+      .. code-block:: python
+
+         curs = db.execute('select 1')
+         print(curs.fetchall())  # [(1,)]
+         print(curs.fetchall())  # []
+
+   .. py:method:: value()
+
+      Fetch a single scalar value from the query result set. If no results are
+      available or cursor has been consumed returns ``None``.
+
+      Example:
+
+      .. code-block:: python
+
+         curs = db.execute('select 1')
+         print(curs.value())  # 1
+         print(curs.value())  # None
+
+   .. py:method:: close()
+
+      Close the cursor and release associated resources.
+
+      .. note::
+
+         It is not necessary to explicitly close a cursor. Cursors will be
+         closed during garbage collection automatically.
 
 
 Exceptions
