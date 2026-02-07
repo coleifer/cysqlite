@@ -909,15 +909,21 @@ cdef class Connection(_callable_context_manager):
             raise_sqlite_error(self.db, 'error requesting db status: ')
         return (current, highwater)
 
-    def pragma(self, key, value=SENTINEL, database=None):
+    def pragma(self, key, value=SENTINEL, database=None, multi=False):
         if database is not None:
             key = '"%s".%s' % (database, key)
         sql = 'PRAGMA %s' % key
         if value is not SENTINEL:
             sql += ' = %s' % (value or 0)
-        row = self.execute_one(sql)
-        if row:
-            return row[0]
+
+        curs = self.execute(sql)
+        if multi:
+            # Return multiple rows, e.g. PRAGMA table_list.
+            return curs
+        else:
+            # Return a single value, if one was returned.
+            row = curs.fetchone()
+            return row[0] if row else None
 
     def get_tables(self, database=None):
         database = database or 'main'

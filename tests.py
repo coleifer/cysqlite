@@ -737,10 +737,18 @@ class TestTransactions(BaseTestCase):
         self.assertTrue(self.db.autocommit())
 
         self.db.begin()
+
+        # Cannot begin a transaction within a transaction.
+        self.assertRaises(OperationalError, self.db.begin)
+
         self.assertFalse(self.db.autocommit())
         self.create_rows(('k2', 'v2', 2))
         self.db.commit()
         self.assertTrue(self.db.autocommit())
+
+        # Cannot commit() or rollback() when no transaction is active.
+        self.assertRaises(OperationalError, self.db.commit)
+        self.assertRaises(OperationalError, self.db.rollback)
 
         curs = self.db.execute('select key from kv order by key')
         self.assertEqual([row for row, in curs], ['k2'])
@@ -1378,6 +1386,12 @@ class TestDatabaseSettings(BaseTestCase):
         for value in (1, 0, 1):
             self.db.pragma('foreign_keys', value)
             self.assertEqual(self.db.pragma('foreign_keys'), value)
+
+        self.db.execute('create table t1 (a)')
+        self.db.execute('create table t2 (b)')
+        curs = self.db.pragma('table_list', database='main', multi=True)
+        self.assertEqual(sorted(row[1] for row in curs),
+                         ['kv', 'sqlite_schema', 't1', 't2'])
 
     def test_table_column_metadata(self):
         self.assertEqual(self.db.table_column_metadata('kv', 'id'), (
