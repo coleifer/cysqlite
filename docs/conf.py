@@ -29,4 +29,5 @@ html_theme_options = {
     'github_user': 'coleifer',
     'github_repo': 'cysqlite',
     'page_width': '1000px',
+    'font_size': '15px',
 }
