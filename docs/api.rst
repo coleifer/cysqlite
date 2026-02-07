@@ -1417,39 +1417,39 @@ Blob
 
 .. class:: Blob(conn, table, column, rowid, read_only=False, database=None)
 
-    Open a blob handle, stored in the given table/column/row, for incremental
-    I/O. To allocate storage for new data, you can use the SQL ``zeroblob(n)``
-    function, where *n* is the desired size in bytes.
+   Open a blob handle, stored in the given table/column/row, for incremental
+   I/O. To allocate storage for new data, you can use the SQL ``zeroblob(n)``
+   function, where *n* is the desired size in bytes.
 
-    :param conn: :class:`Connection` instance.
-    :param str table: Name of table being accessed.
-    :param str column: Name of column being accessed.
-    :param int rowid: Primary-key of row being accessed.
-    :param bool read_only: Prevent any modifications to the blob data.
-    :param str database: Name of database containing table, *optional*.
+   :param conn: :class:`Connection` instance.
+   :param str table: Name of table being accessed.
+   :param str column: Name of column being accessed.
+   :param int rowid: Primary-key of row being accessed.
+   :param bool read_only: Prevent any modifications to the blob data.
+   :param str database: Name of database containing table, *optional*.
 
-    .. code-block:: python
+   .. code-block:: python
 
-       db = connect(':memory:')
-       db.execute('create table raw_data (id integer primary key, data blob)')
+      db = connect(':memory:')
+      db.execute('create table raw_data (id integer primary key, data blob)')
 
-       # Allocate 100MB of space for writing a large file incrementally:
-       db.execute('insert into raw_data (data) values (zeroblob(?))',
-                  (1024 * 1024 * 100,))
-       rowid = db.last_insert_rowid()
+      # Allocate 100MB of space for writing a large file incrementally:
+      db.execute('insert into raw_data (data) values (zeroblob(?))',
+                 (1024 * 1024 * 100,))
+      rowid = db.last_insert_rowid()
 
-       # Now we can open the row for incremental I/O:
-       blob = Blob(db, 'rawdata', 'data', rowid)
+      # Now we can open the row for incremental I/O:
+      blob = Blob(db, 'rawdata', 'data', rowid)
 
-       # Read from the file and write to the blob in chunks of 4096 bytes.
-       while True:
-           data = file_handle.read(4096)
-           if not data:
-               break
-           blob.write(data)
+      # Read from the file and write to the blob in chunks of 4096 bytes.
+      while True:
+          data = file_handle.read(4096)
+          if not data:
+              break
+          blob.write(data)
 
-       bytes_written = blob.tell()
-       blob.close()
+      bytes_written = blob.tell()
+      blob.close()
 
    .. method:: read(n=None)
 
