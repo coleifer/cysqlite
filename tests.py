@@ -1408,6 +1408,7 @@ class TestDatabaseSettings(BaseTestCase):
             Column('key', 'TEXT', False, False, 'kv', None),
             Column('value', 'TEXT', False, False, 'kv', None),
             Column('extra', 'INTEGER', True, False, 'kv', None)])
+        self.assertEqual(self.db.get_primary_keys('kv'), ['id'])
 
         self.db.execute('create unique index kv_key on kv (key desc, value)')
         self.assertEqual(self.db.get_indexes('kv'), [
