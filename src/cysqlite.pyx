@@ -305,7 +305,7 @@ cdef class Statement(object):
 
         return tuple(out)
 
-    cdef bind(self, params):
+    cdef int bind(self, params) except -1:
         cdef:
             const char *buf
             Py_ssize_t nbytes
@@ -373,6 +373,8 @@ cdef class Statement(object):
             if rc != SQLITE_OK:
                 sqlite3_clear_bindings(self.st)
                 raise_sqlite_error(self.conn.db, 'error binding parameter: ')
+
+        return 0
 
     cdef int step(self):
         cdef int rc

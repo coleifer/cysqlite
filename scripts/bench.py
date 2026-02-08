@@ -23,8 +23,19 @@ def test_bind(db):
         None] * 100
     binds = ', '.join(['?'] * len(params))
     sql = 'select %s' % binds
+    params = tuple(params)
 
     with measure(db, 'bind'):
+        for i in range(20000):
+            db.execute(sql, params)
+
+def test_bind_small(db):
+    params = ['a' * 10, 'b' * 10]
+    binds = ', '.join(['?'] * len(params))
+    sql = 'select %s' % binds
+    params = tuple(params)
+
+    with measure(db, 'bind (small)'):
         for i in range(20000):
             db.execute(sql, params)
 
@@ -56,6 +67,9 @@ def test_iterate(db):
 
 test_bind(sq3_db)
 test_bind(cy_db)
+
+test_bind_small(sq3_db)
+test_bind_small(cy_db)
 
 test_column(sq3_db)
 test_column(cy_db)
