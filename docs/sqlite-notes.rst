@@ -35,8 +35,8 @@ adapting Python types:
 +-------------------------------+------------------------------------------+
 | ``date``                      | ``TEXT`` (isoformat)                     |
 +-------------------------------+------------------------------------------+
-| ``Fraction``, ``__float__()`` | ``REAL``                                 |
-| ``Decimal``                   |                                          |
+| ``Fraction``, ``Decimal``,    | ``REAL``                                 |
+| ``__float__()``               |                                          |
 +-------------------------------+------------------------------------------+
 | **Anything else**             | ``TEXT`` (coerced to ``str()``)          |
 +-------------------------------+------------------------------------------+
@@ -52,8 +52,9 @@ Examples:
        'a text \u2012 string',
        b'\x00\xff\x00\xff',
        bytearray(b'this is a buffer'),
-       datetime.datetime(2026, 1, 2, 3, 4, 5).astimezone(datetime.timezone.utc),
-       datetime.date(2026, 2, 3),
+       datetime(2026, 1, 2, 3, 4, 5).astimezone(timezone.utc),
+       datetime(2026, 2, 3, 4, 5, 6),
+       date(2026, 3, 4),
        uuid.uuid4(),  # str()
    ]
 
@@ -67,8 +68,9 @@ Examples:
    # ('text',    'a text ‒ string')
    # ('blob',    b'\x00\xff\x00\xff')
    # ('blob',    b'this is a buffer')
-   # ('text',    '2026-01-02 09:04:05+00:00')
-   # ('text',    '2026-02-03')
+   # ('text',    '2026-01-02 03:04:05+00:00')
+   # ('text',    '2026-02-03 04:05:06')
+   # ('text',    '2026-03-04')
    # ('text',    '0c4ca10a-56ab-470a-9357-d28366d97ceb')
 
 At the time of writing, no special attempts at type inference are applied to
