@@ -287,20 +287,48 @@ cdef class Statement(object):
             pos += 1
         return 0
 
-    cdef bind(self, tuple params):
+    cdef tuple _convert_dict_to_params(self, dict params):
+        cdef:
+            int i
+            int pc
+            str bind_name
+            list out = []
+
+        pc = sqlite3_bind_parameter_count(self.st)
+
+        for i in range(1, pc + 1):
+            bind_name = decode(sqlite3_bind_parameter_name(self.st, i)[1:])
+            if bind_name not in params:
+                raise OperationalError('error: "%s" parameter not found' %
+                                       bind_name)
+            out.append(params[bind_name])
+
+        return tuple(out)
+
+    cdef bind(self, params):
         cdef:
             const char *buf
             Py_ssize_t nbytes
             Py_buffer view
             int i = 1, rc = 0
+            tuple tparams
+
+        # If params were passed as a dict, convert to a list.
+        if isinstance(params, dict):
+            params = self._convert_dict_to_params(params)
+
+        if not isinstance(params, tuple):
+            tparams = tuple(params)
+        else:
+            tparams = <tuple>params
 
         pc = sqlite3_bind_parameter_count(self.st)
-        if pc != len(params):
+        if pc != len(tparams):
             raise OperationalError('error: %s parameters required' % pc)
 
         # Note: sqlite3_bind_XXX uses 1-based indexes.
         for i in range(pc):
-            param = params[i]
+            param = tparams[i]
 
             if param is None:
                 rc = sqlite3_bind_null(self.st, i + 1)
@@ -460,8 +488,6 @@ cdef class Cursor(object):
 
         self.stmt = self.conn.stmt_get(sql)
         if params:
-            if not isinstance(params, tuple):
-                params = tuple(params)
             self.stmt.bind(params)
         else:
             self.stmt.bind(())
@@ -503,8 +529,6 @@ cdef class Cursor(object):
 
         self.stmt = self.conn.stmt_get(sql)
         for params in seq_of_params:
-            if not isinstance(params, tuple):
-                params = tuple(params)
             self.stmt.bind(params)
 
             self.step_status = self.stmt.step()

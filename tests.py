@@ -283,6 +283,9 @@ class TestExecute(BaseTestCase):
         row = self.db.execute_one('select * from g where k = ?', ('k2',))
         self.assertEqual(row, ('k2', 2))
 
+        row = self.db.execute_one('select * from g where k = :k', {'k': 'k3'})
+        self.assertEqual(row, ('k3', 3))
+
         res = self.db.execute_scalar('select sum(v) from g')
         self.assertEqual(res, 6)
 
@@ -335,6 +338,23 @@ class TestExecute(BaseTestCase):
             self.assertRaises(OperationalError, obj.executemany, q, [(1,)])
             self.assertRaises(OperationalError, obj.executemany, q, [(1, 2, 3)])
 
+    def test_execute_wrong_params_dict(self):
+        self.db.execute('create table g (k, v)')
+        q = 'insert into g (k, v) values (:k, :v)'
+
+        curs = self.db.cursor()
+        for obj in (self.db, curs):
+            self.assertRaises(OperationalError, obj.execute, q)
+            self.assertRaises(OperationalError, obj.execute, q, {'k': 'k1'})
+            self.assertRaises(OperationalError, obj.execute, q,
+                              {'x': 'k1', 'v': 'v1'})
+
+            self.assertRaises(ValueError, obj.executemany, q, [])
+            self.assertRaises(OperationalError, obj.executemany, q,
+                              [{'k': 'k1'}])
+            self.assertRaises(OperationalError, obj.executemany, q,
+                              [{'x': 'k1', 'v': 'v1'}])
+
     def test_execute_datatypes(self):
         self.db.execute('create table k (id integer not null primary key, '
                         'n, i integer, r real, t text, b blob)')
@@ -373,6 +393,34 @@ class TestExecute(BaseTestCase):
         res = self.db.execute('select data from k order by id').fetchall()
         self.assertEqual([r for r, in res],
                          [r[1] for r in VAL_CONVERSION_TESTS])
+
+    def test_execute_bind_sequence(self):
+        res = self.db.execute_one('select ?, ?, ?', (1, 2.3, 'test'))
+        self.assertEqual(res, (1, 2.3, 'test'))
+
+        res = self.db.execute_one('select ?, ?, ?', [None, False, b'asdf'])
+        self.assertEqual(res, (None, 0, b'asdf'))
+
+        res = self.db.execute_one('select ?, ?, ?', range(3))
+        self.assertEqual(res, (0, 1, 2))
+
+        res = self.db.execute_one('select 1', ())
+        self.assertEqual(res, (1,))
+
+    def test_execute_bind_dict(self):
+        res = self.db.execute_one('select :k1, :k2, :k3',
+                                  {'k1': 1, 'k2': 2.3, 'k3': 'test'})
+        self.assertEqual(res, (1, 2.3, 'test'))
+
+        res = self.db.execute_one('select :k1, :k2, :k3',
+                                  {'k1': None, 'k2': False, 'k3': b'asdf'})
+        self.assertEqual(res, (None, 0, b'asdf'))
+
+        res = self.db.execute_one('select :k1, :k1, :k1', {'k1': 'ok'})
+        self.assertEqual(res, ('ok', 'ok', 'ok'))
+
+        res = self.db.execute_one('select 1', {})
+        self.assertEqual(res, (1,))
 
     def test_empty_query(self):
         self.assertRaises(SqliteError, self.db.execute, '')
