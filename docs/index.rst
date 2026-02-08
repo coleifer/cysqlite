@@ -42,6 +42,11 @@ Example usage:
     for row in curs:
         print(row)  # e.g., ('k00', 'v00')
 
+    # We can use named parameters with a dict as well.
+    row = db.execute_one('select * from data where k = :key and v = :val',
+                         {'key': 'k50', 'val': 'v50'})
+    print(row)  # ('k50', 'v50')
+
     db.close()
 
 .. toctree::
