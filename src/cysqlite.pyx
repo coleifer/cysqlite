@@ -236,7 +236,7 @@ cdef class Statement(object):
         sqlite3_stmt *st
         bint is_dml
         bytes sql
-        object __weakref__  # Allow weak-references to be made.
+        #object __weakref__  # Allow weak-references to be made.
 
     def __cinit__(self, Connection conn, bytes sql):
         self.conn = conn
@@ -674,7 +674,7 @@ cdef class Connection(_callable_context_manager):
         self.db = NULL
         self.functions = {}
         self.stmt_available = {}
-        self.stmt_in_use = weakref.WeakValueDictionary()
+        self.stmt_in_use = {}
         self.blob_in_use = weakref.WeakValueDictionary()
         self._transaction_depth = 0
 
