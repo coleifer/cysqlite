@@ -475,6 +475,12 @@ cdef class Cursor(object):
         self.description = None
         self.row_factory = conn.row_factory
 
+    def __dealloc__(self):
+        if self.stmt is not None and self.stmt.st != NULL:
+            self.stmt.reset()
+            self.conn.stmt_release(self.stmt)
+            self.stmt = None
+
     cdef set_description(self):
         self.description = tuple([(name,) for name in self.stmt.columns()])
 
