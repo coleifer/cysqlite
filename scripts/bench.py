@@ -27,7 +27,7 @@ def test_bind(db):
 
     with measure(db, 'bind'):
         for i in range(10000):
-            db.execute(sql, params)
+            db.execute(sql, params).fetchall()
 
 def test_bind_small(db):
     params = ['a' * 10, 'b' * 10]
@@ -37,7 +37,7 @@ def test_bind_small(db):
 
     with measure(db, 'bind (small)'):
         for i in range(50000):
-            db.execute(sql, params)
+            db.execute(sql, params).fetchall()
 
 def test_column(db):
     values = list(range(400))
@@ -49,14 +49,14 @@ def test_column(db):
 
     with measure(db, 'column'):
         for i in range(10000):
-            db.execute('select * from k').fetchone()
+            db.execute('select * from k').fetchall()
 
     db.execute('drop table k')
 
 def test_stmt_overhead(db):
     with measure(db, 'stmt overhead'):
         for i in range(100000):
-            db.execute('select 1')
+            db.execute('select 1').fetchall()
 
 def test_stmt_overhead_cursor(db):
     cursor = db.cursor()
