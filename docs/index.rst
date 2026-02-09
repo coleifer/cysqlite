@@ -6,6 +6,8 @@
 cysqlite documentation
 ======================
 
+.. image:: logo.png
+
 cysqlite provides performant bindings to SQLite. cysqlite aims to be roughly
 compatible with the behavior of the standard lib ``sqlite3`` module, but are
 closer in spirit to ``apsw``, just with fewer features.
