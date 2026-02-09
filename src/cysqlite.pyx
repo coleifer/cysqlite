@@ -14,6 +14,7 @@ from cpython.object cimport PyObject
 from cpython.ref cimport Py_DECREF
 from cpython.ref cimport Py_INCREF
 from cpython.tuple cimport PyTuple_New
+from cpython.tuple cimport PyTuple_GET_SIZE
 from cpython.tuple cimport PyTuple_SET_ITEM
 from cpython.unicode cimport PyUnicode_AsUTF8String
 from cpython.unicode cimport PyUnicode_AsUTF8AndSize
@@ -311,6 +312,7 @@ cdef class Statement(object):
             Py_ssize_t nbytes
             Py_buffer view
             int i = 1, rc = 0
+            int pc
             tuple tparams
 
         # If params were passed as a dict, convert to a list.
@@ -323,7 +325,7 @@ cdef class Statement(object):
             tparams = <tuple>params
 
         pc = sqlite3_bind_parameter_count(self.st)
-        if pc != len(tparams):
+        if pc != PyTuple_GET_SIZE(tparams):
             raise OperationalError('error: %s parameters required' % pc)
 
         # Note: sqlite3_bind_XXX uses 1-based indexes.
