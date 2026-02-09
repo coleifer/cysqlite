@@ -218,15 +218,23 @@ class TestCheckConnection(BaseTestCase):
         self.db.executemany('insert into k (data) values (?)',
                             [(1,), (2,), (3,)])
         curs = self.db.execute('select * from k order by data')
+        self.assertEqual(self.db.get_stmt_usage(), (2, 1))
 
-        # Cursor is no good. Run twice to ensure state doesn't change on first
-        # failure.
-        self.assertRaises(OperationalError, curs.execute, 'select 1')
-        self.assertRaises(OperationalError, curs.execute, 'select 1')
+        # If execute is called before cursor is consumed, it will reset.
+        self.assertEqual(curs.execute('select 1').fetchone(), (1,))
+        self.assertEqual(self.db.get_stmt_usage(), (3, 1))
 
-        # We can close and re-execute, though.
+        self.assertEqual(curs.execute('select 2').fetchone(), (2,))
+        self.assertEqual(self.db.get_stmt_usage(), (4, 1))
+
+        # We can close and re-execute.
         curs.close()
+
         self.assertEqual(curs.execute('select 1').value(), 1)
+        self.assertEqual(self.db.get_stmt_usage(), (5, 0))
+
+        self.assertEqual(curs.execute('select 2').value(), 2)
+        self.assertEqual(self.db.get_stmt_usage(), (5, 0))
 
 
 class TestExecute(BaseTestCase):

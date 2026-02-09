@@ -484,7 +484,7 @@ cdef class Cursor(object):
             self.executing = False
             raise OperationalError('Database is closed.')
         elif self.executing:
-            raise OperationalError('Cursor is already in use.')
+            self.finish()
 
         self.description = None
         self.rowcount = -1
@@ -524,7 +524,7 @@ cdef class Cursor(object):
             self.executing = False
             raise OperationalError('Database is closed.')
         elif self.executing:
-            raise OperationalError('Cursor is already in use.')
+            self.finish()
 
         self.description = None
         self.rowcount = 0
