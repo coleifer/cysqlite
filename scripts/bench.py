@@ -62,7 +62,13 @@ def test_stmt_overhead_cursor(db):
     cursor = db.cursor()
     with measure(db, 'stmt overhead (cursor)'):
         for i in range(100000):
-            cursor.execute('select 1').fetchall()
+            cursor.execute('select 1')
+
+def test_stmt_cache_exhaustion(db):
+    cursor = db.cursor()
+    with measure(db, 'stmt cache exhaustion'):
+        for i in range(100000):
+            cursor.execute('select %d' % i)
 
 def test_iterate(db):
     db.execute('create table k (id integer not null primary key, data text)')
@@ -84,11 +90,14 @@ test_bind_small(cy_db)
 test_column(sq3_db)
 test_column(cy_db)
 
-test_iterate(sq3_db)
-test_iterate(cy_db)
-
 test_stmt_overhead(sq3_db)
 test_stmt_overhead(cy_db)
 
 test_stmt_overhead_cursor(sq3_db)
 test_stmt_overhead_cursor(cy_db)
+
+test_stmt_cache_exhaustion(sq3_db)
+test_stmt_cache_exhaustion(cy_db)
+
+test_iterate(sq3_db)
+test_iterate(cy_db)
