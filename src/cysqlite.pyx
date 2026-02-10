@@ -21,6 +21,7 @@ from cpython.unicode cimport PyUnicode_AsUTF8String
 from cpython.unicode cimport PyUnicode_AsUTF8AndSize
 from cpython.unicode cimport PyUnicode_Check
 from cpython.unicode cimport PyUnicode_DecodeUTF8
+from cpython.unicode cimport PyUnicode_FromString
 from libc.float cimport DBL_MAX
 from libc.limits cimport INT_MAX
 from libc.math cimport log
@@ -289,18 +290,22 @@ cdef class Statement(object):
             pos += 1
         return 0
 
-    cdef tuple _convert_dict_to_params(self, dict params):
+    cdef tuple _convert_dict_to_params(self, dict params, int pc):
         cdef:
             int i
-            int pc
             str bind_name
+            const char *zbind_name
             list out = []
 
-        pc = sqlite3_bind_parameter_count(self.st)
-
         for i in range(1, pc + 1):
-            bind_name = decode(sqlite3_bind_parameter_name(self.st, i)[1:])
-            if bind_name not in params:
+            zbind_name = sqlite3_bind_parameter_name(self.st, i)
+            if not zbind_name:
+                raise ProgrammingError('error: binding %s has no name' % i)
+            bind_name = PyUnicode_FromString(zbind_name + 1)
+            if not bind_name:
+                raise ProgrammingError('error: binding %s name could not be '
+                                       'determined' % i)
+            elif bind_name not in params:
                 raise OperationalError('error: "%s" parameter not found' %
                                        bind_name)
             out.append(params[bind_name])
@@ -316,16 +321,18 @@ cdef class Statement(object):
             int pc
             tuple tparams
 
+        # Get number of params needed.
+        pc = sqlite3_bind_parameter_count(self.st)
+
         # If params were passed as a dict, convert to a list.
         if isinstance(params, dict):
-            params = self._convert_dict_to_params(params)
+            params = self._convert_dict_to_params(params, pc)
 
         if not isinstance(params, tuple):
             tparams = tuple(params)
         else:
             tparams = <tuple>params
 
-        pc = sqlite3_bind_parameter_count(self.st)
         if pc != PyTuple_GET_SIZE(tparams):
             raise OperationalError('error: %s parameters required' % pc)
 

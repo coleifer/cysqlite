@@ -413,6 +413,21 @@ class TestExecute(BaseTestCase):
             self.assertRaises(OperationalError, obj.executemany, q,
                               [{'x': 'k1', 'v': 'v1'}])
 
+    def test_execute_many_params(self):
+        nparams = 100
+        tuple_data = list(range(nparams))
+        tuple_params = ', '.join(['?'] * nparams)
+
+        dict_data = {'k%03d' % i: i for i in range(nparams)}
+        dict_params = ', '.join(sorted([':%s' % k for k in dict_data]))
+
+        for i in range(10):
+            row = self.db.execute_one('select %s' % tuple_params, tuple_data)
+            self.assertEqual(row, tuple(range(nparams)))
+
+            row = self.db.execute_one('select %s' % dict_params, dict_data)
+            self.assertEqual(row, tuple(range(nparams)))
+
     def test_execute_datatypes(self):
         self.db.execute('create table k (id integer not null primary key, '
                         'n, i integer, r real, t text, b blob)')
