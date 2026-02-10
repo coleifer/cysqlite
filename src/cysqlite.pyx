@@ -16,8 +16,10 @@ from cpython.ref cimport Py_INCREF
 from cpython.tuple cimport PyTuple_New
 from cpython.tuple cimport PyTuple_GET_SIZE
 from cpython.tuple cimport PyTuple_SET_ITEM
+from cpython.unicode cimport PyUnicode_AsUTF8
 from cpython.unicode cimport PyUnicode_AsUTF8String
 from cpython.unicode cimport PyUnicode_AsUTF8AndSize
+from cpython.unicode cimport PyUnicode_Check
 from cpython.unicode cimport PyUnicode_DecodeUTF8
 from libc.float cimport DBL_MAX
 from libc.limits cimport INT_MAX
@@ -236,7 +238,6 @@ cdef class Statement(object):
         sqlite3_stmt *st
         bint is_dml
         bytes sql
-        #object __weakref__  # Allow weak-references to be made.
 
     def __cinit__(self, Connection conn, bytes sql):
         self.conn = conn
@@ -558,6 +559,58 @@ cdef class Cursor(object):
         self.finish()
         return self
 
+    cpdef executescript(self, sql):
+        if self.conn.db == NULL:
+            self.stmt = None
+            self.executing = False
+            raise OperationalError('Database is closed.')
+        elif self.executing:
+            self.finish()
+
+        cdef:
+            sqlite3_stmt *st
+            const char *zsql
+            const char *tail
+            int rc
+
+        if PyUnicode_Check(sql):
+            zsql = PyUnicode_AsUTF8(<str>sql)
+            if not zsql:
+                raise MemoryError
+        else:
+            raise ValueError('sql script must be string')
+
+        while True:
+            attempted = str(zsql)
+            with nogil:
+                rc = sqlite3_prepare_v2(self.conn.db, zsql, -1, &st, &zsql)
+
+            if rc != SQLITE_OK:
+                raise_sqlite_error(self.conn.db, 'error executing query: ')
+
+            rc = SQLITE_ROW
+            while rc == SQLITE_ROW:
+                with nogil:
+                    rc = sqlite3_step(st)
+
+            if rc != SQLITE_DONE:
+                sqlite3_finalize(st)
+
+                # MISUSE is returned if statement is empty, so make sure we
+                # actually have an error.
+                code = sqlite3_errcode(self.conn.db)
+                if code != 0:
+                    raise_sqlite_error(self.conn.db, 'error executing query: ')
+
+            rc = sqlite3_finalize(st)
+            if rc != SQLITE_OK:
+                raise_sqlite_error(self.conn.db, 'error finalizing query: ')
+
+            if zsql[0] == 0:
+                break
+
+        return self
+
     def __iter__(self):
         return self
 
@@ -838,14 +891,17 @@ cdef class Connection(_callable_context_manager):
     def execute(self, sql, params=None):
         check_connection(self)
         cdef Cursor cursor = Cursor(self)
-        cursor.execute(sql, params)
-        return cursor
+        return cursor.execute(sql, params)
 
     def executemany(self, sql, seq_of_params):
         check_connection(self)
         cdef Cursor cursor = Cursor(self)
-        cursor.executemany(sql, seq_of_params)
-        return cursor
+        return cursor.executemany(sql, seq_of_params)
+
+    def executescript(self, sql):
+        check_connection(self)
+        cdef Cursor cursor = Cursor(self)
+        return cursor.executescript(sql)
 
     def execute_one(self, sql, params=None):
         cdef Cursor c = self.execute(sql, params)

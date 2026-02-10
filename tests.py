@@ -173,6 +173,7 @@ class TestCheckConnection(BaseTestCase):
         self.assertRaises(OperationalError, self.db.last_insert_rowid)
         self.assertRaises(OperationalError, self.db.autocommit)
         self.assertRaises(OperationalError, self.db.execute, 'select 1')
+        self.assertRaises(OperationalError, self.db.executescript, 'select 1')
         self.assertRaises(OperationalError, cursor.execute, 'select 1')
         self.assertRaises(OperationalError, cursor2.fetchone)
 
@@ -331,6 +332,32 @@ class TestExecute(BaseTestCase):
         with self.assertRaises(OperationalError):
             curs.executemany('insert into g(k, v) values (?, ?) returning k',
                              [('kx', 1)])
+
+    def test_executescript(self):
+        self.db.executescript("""
+            BEGIN;
+            CREATE TABLE t1 (id integer primary key, c1 text);
+            CREATE TABLE t2 (id integer primary key, c2 text);
+            CREATE TABLE t3 (id integer primary key, c3 text);
+            COMMIT;
+        """)
+        self.assertEqual(sorted(self.db.get_tables()), ['t1', 't2', 't3'])
+
+        cursor = self.db.cursor()
+        cursor.executescript("""
+            BEGIN;
+            CREATE TABLE t4 (id integer primary key, c4 text);
+            DROP TABLE t2;
+            CREATE TABLE t5 (id integer primary key, c5 text);
+            DROP TABLE t3;
+            CREATE TABLE t6 (id integer primary key, c6 text);
+            COMMIT;
+        """)
+        self.assertEqual(sorted(self.db.get_tables()),
+                         ['t1', 't4', 't5', 't6'])
+
+        # Ensure cursor is usable.
+        self.assertEqual(cursor.execute('select 1').value(), 1)
 
     def test_execute_wrong_params(self):
         self.db.execute('create table g (k, v)')
