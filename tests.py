@@ -413,6 +413,10 @@ class TestExecute(BaseTestCase):
             self.assertRaises(OperationalError, obj.executemany, q,
                               [{'x': 'k1', 'v': 'v1'}])
 
+        self.assertRaises(ProgrammingError,
+                          self.db.execute,
+                          'select :k, ?', {'k': 'v'})
+
     def test_execute_many_params(self):
         nparams = 100
         tuple_data = list(range(nparams))
