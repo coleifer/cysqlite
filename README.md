@@ -57,6 +57,14 @@ cd cysqlite/
 pip install .
 ```
 
+Alternately, you can create a self-contained build that embeds [SQLite3
+Multiple Ciphers](https://github.com/utelle/SQLite3MultipleCiphers):
+
+1. Obtain the latest `*amalgamation.zip` from the [sqlite3mc releases page](https://github.com/utelle/SQLite3MultipleCiphers/releases)
+2. Extract `sqlite3mc_amalgamation.c` and `sqlite3mc_amalgamation.h` into the
+   root of the cysqlite checkout.
+3. Run `pip install .`
+
 ### Example
 
 Example usage:
