@@ -87,8 +87,8 @@ for row in curs:
 
 # We can use named parameters with a dict as well.
 row = db.execute_one('select * from data where k = :key and v = :val',
-                     {'key': 'k50', 'val': 'v50'})
-print(row)  # ('k50', 'v50')
+                     {'key': 'k05', 'val': 'v05'})
+print(row)  # ('k05', 'v05')
 
 db.close()
 ```
