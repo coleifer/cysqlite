@@ -1,4 +1,5 @@
 # cython: language_level=3
+from cpython.buffer cimport PyObject_CheckBuffer
 from cpython.bytes cimport PyBytes_Check
 from cpython.unicode cimport PyUnicode_AsUTF8String
 from cpython.unicode cimport PyUnicode_Check
@@ -12,6 +13,8 @@ cdef inline unicode decode(key):
         ukey = <unicode>key
     elif key is None:
         return None
+    elif PyObject_CheckBuffer(key):
+        return bytes(key).decode('utf8')
     else:
         ukey = unicode(key)
     return ukey
@@ -25,6 +28,8 @@ cdef inline bytes encode(key):
         bkey = <bytes>key
     elif key is None:
         return None
+    elif PyObject_CheckBuffer(key):
+        bkey = bytes(key)
     else:
         bkey = PyUnicode_AsUTF8String(unicode(key))
     return bkey

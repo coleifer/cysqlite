@@ -1487,6 +1487,9 @@ class TestUserDefinedCallbacks(BaseTestCase):
         self.db.execute_simple('select key, value from kv order by key', cb)
         self.assertEqual(accum, [('k3', 'v3z')])
 
+        self.db.execute_simple('select NULL as key, \'asdf\' as value', cb)
+        self.assertEqual(accum[-1], (None, 'asdf'))
+
     def test_exec_no_cb(self):
         self.db.execute_simple("insert into kv (key, value, extra) "
                                "values ('k4', 'v4', 4)")
@@ -1827,8 +1830,20 @@ class TestBlob(BaseTestCase):
         self.assertEqual(blob.tell(), 0)
         self.assertEqual(len(blob), 16)
 
-        blob.write(b'x' * 15)
-        self.assertEqual(blob.tell(), 15)
+        # Ensure buffer-types are handled properly.
+        ba = bytearray(b'y' * 16)
+        blob.write(ba)
+        self.assertEqual(blob.tell(), 16)
+
+        blob.seek(0)
+        ba[0:4] = b'zzzx'
+        mv = memoryview(ba[:5])
+        blob.write(mv)
+        self.assertEqual(blob.tell(), 5)
+
+        blob.seek(0)
+        data = blob.read(16)
+        self.assertEqual(data, b'zzzxyyyyyyyyyyyy')
 
     def test_blob_exceed_size(self):
         rowid = self.create_blob_row(16)
@@ -1839,6 +1854,9 @@ class TestBlob(BaseTestCase):
 
         with self.assertRaises(ValueError):
             blob.write(b'x' * 17)
+
+        with self.assertRaises(ValueError):
+            blob.write(bytearray(b'x' * 17))
 
         blob.write(b'x' * 16)
         self.assertEqual(blob.tell(), 16)

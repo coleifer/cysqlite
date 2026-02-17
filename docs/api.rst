@@ -1571,6 +1571,8 @@ Blob
    .. method:: read(n=None)
 
       :param int n: Only read up to *n* bytes from current position in file.
+      :return: Blob data
+      :rtype: bytes
 
       Read up to *n* bytes from the current position in the blob file. If *n*
       is not specified, the entire blob will be read.
@@ -1594,7 +1596,8 @@ Blob
 
    .. method:: write(data)
 
-      :param bytes data: Data to be written
+      :param data: Data to be written
+      :type data: buffer (e.g. bytes, bytearray, memoryview), str (will be encoded as UTF8)
 
       Writes the given data, starting at the current position in the file. If
       the data is too large for the blob to store, raises ``ValueError``.

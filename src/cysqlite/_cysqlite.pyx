@@ -94,7 +94,7 @@ cdef raise_sqlite_error(sqlite3 *db, unicode msg):
         ext = sqlite3_extended_errcode(db)
         errmsg = decode(sqlite3_errmsg(db))
     else:
-        errmsg = b'(db handle is NULL)'
+        errmsg = '(db handle is NULL)'
 
     if code in (SQLITE_CONSTRAINT,):
         exc = IntegrityError
@@ -414,7 +414,7 @@ cdef class Statement(object):
                     nbytes)
             else:
                 raise OperationalError(
-                    'error: cannot bind parameter %d: type = %r'
+                    'error: cannot read parameter %d: type = %r'
                     % (i, coltype))
 
             # If we were in C we wouldn't need to do this, but Cython sees that
@@ -1189,9 +1189,12 @@ cdef class Connection(_callable_context_manager):
         check_connection(self)
         cdef:
             _Callback callback
-            bytes bname = encode(name or fn.__name__)
+            bytes bname
             int flags = SQLITE_UTF8
             int rc
+
+        name = name or fn.__name__
+        bname = encode(name)
 
         # Store reference to user-defined function.
         callback = _Callback.__new__(_Callback, self, fn)
@@ -1216,9 +1219,12 @@ cdef class Connection(_callable_context_manager):
         check_connection(self)
         cdef:
             _Callback callback
-            bytes bname = encode(name or agg.__name__)
+            bytes bname
             int flags = SQLITE_UTF8
             int rc
+
+        name = name or agg.__name__
+        bname = encode(name)
 
         if deterministic:
             flags |= SQLITE_DETERMINISTIC
@@ -1245,9 +1251,12 @@ cdef class Connection(_callable_context_manager):
         check_connection(self)
         cdef:
             _Callback callback
-            bytes bname = encode(name or agg.__name__)
+            bytes bname
             int flags = SQLITE_UTF8
             int rc
+
+        name = name or agg.__name__
+        bname = encode(name)
 
         if deterministic:
             flags |= SQLITE_DETERMINISTIC
@@ -1271,12 +1280,15 @@ cdef class Connection(_callable_context_manager):
         if rc != SQLITE_OK:
             raise_sqlite_error(self.db, 'error creating aggregate: ')
 
-    def create_collation(self, fn, name):
+    def create_collation(self, fn, name=None):
         check_connection(self)
         cdef:
             _Callback callback
-            bytes bname = encode(name or fn.__name__)
+            bytes bname
             int rc
+
+        name = name or fn.__name__
+        bname = encode(name)
 
         # Store reference to user-defined function.
         callback = _Callback.__new__(_Callback, self, fn)
@@ -1840,15 +1852,8 @@ cdef int _exec_callback(void *data, int argc, char **argv, char **colnames) noex
         return SQLITE_OK
 
     callback = <object>data
-    if not getattr(callback, 'rowtype', None):
-        cols = []
-        for i in range(argc):
-            bcol = <bytes>(colnames[i])
-            cols.append(decode(bcol))
-
-        callback.rowtype = namedtuple('Row', cols)
-
-    row = callback.rowtype(*[decode(argv[i]) for i in range(argc)])
+    row = tuple([decode(argv[i]) if argv[i] != NULL else None
+                 for i in range(argc)])
     try:
         callback(row)
     except Exception as exc:
@@ -1897,7 +1902,7 @@ cdef class Transaction(_callable_context_manager):
         elif is_bottom and not sqlite3_get_autocommit(self.conn.db):
             try:
                 self.commit(False)
-            except:
+            except Exception:
                 self.rollback(False)
 
 
@@ -1932,7 +1937,7 @@ cdef class Savepoint(_callable_context_manager):
         else:
             try:
                 self.commit(begin=False)
-            except:
+            except Exception:
                 self.rollback()
                 raise
 
@@ -2083,22 +2088,46 @@ cdef class Blob(object):
     def write(self, data):
         _check_blob_closed(self)
         cdef:
-            bytes bdata = encode(data)
-            char *buf
+            const void *buf = NULL
             int n, size
+            Py_buffer view
             Py_ssize_t buflen
+            bint buffer_acquired = False
+
+        if not data:
+            return
 
         size = sqlite3_blob_bytes(self.blob)
-        PyBytes_AsStringAndSize(bdata, &buf, &buflen)
+
+        if PyObject_CheckBuffer(data):
+            if PyObject_GetBuffer(data, &view, PyBUF_CONTIG_RO):
+                raise TypeError('Object does not support readable buffer')
+            buffer_acquired = True
+            buf = view.buf
+            buflen = view.len
+        elif PyUnicode_Check(data):
+            buf = PyUnicode_AsUTF8AndSize(data, &buflen)
+            if buf == NULL:
+                raise ValueError('str could not be encoded as UTF8')
+        else:
+            raise ValueError('Blob.write() data must be buffer, bytes or str')
+
         if buflen > <Py_ssize_t>INT_MAX:
             raise ValueError('Data is too large')
         n = <int>buflen
         if (n + self.offset) < self.offset:
             raise ValueError('Data is too large (integer wrap)')
         if (n + self.offset) > size:
-            raise ValueError('Data would go beyond end of blob')
-        if sqlite3_blob_write(self.blob, buf, n, self.offset):
-            raise_sqlite_error(self.conn.db, 'error writing to blob: ')
+            raise ValueError('Data would go beyond end of blob %s > %s' % (
+                n + self.offset, size))
+
+        try:
+            if sqlite3_blob_write(self.blob, buf, n, self.offset):
+                raise_sqlite_error(self.conn.db, 'error writing to blob: ')
+        finally:
+            if buffer_acquired:
+                PyBuffer_Release(&view)
+
         self.offset += <int>n
 
     def close(self):
@@ -2739,19 +2768,19 @@ def status(flag):
     return (current, highwater)
 
 
-def set_singlethread(self):
+def set_singlethread():
     return sqlite3_config(SQLITE_CONFIG_SINGLETHREAD) == SQLITE_OK
-def set_multithread(self):
+def set_multithread():
     return sqlite3_config(SQLITE_CONFIG_MULTITHREAD) == SQLITE_OK
-def set_serialized(self):
+def set_serialized():
     return sqlite3_config(SQLITE_CONFIG_SERIALIZED) == SQLITE_OK
-def set_lookaside(self, int size, int slots):
+def set_lookaside(int size, int slots):
     return sqlite3_config(SQLITE_CONFIG_LOOKASIDE, size, slots) == SQLITE_OK
-def set_mmap_size(self, default_size, max_size):
+def set_mmap_size(default_size, max_size):
     return sqlite3_config(SQLITE_CONFIG_MMAP_SIZE,
                           <sqlite3_int64>default_size,
                           <sqlite3_int64>max_size) == SQLITE_OK
-def set_stmt_journal_spill(self, int nbytes):
+def set_stmt_journal_spill(int nbytes):
     # nbytes is the spill-to-disk threshold. Statement journals are held in
     # memory until their size exceeds this threshold. Set to -1 to keep
     # journals exclusively in memory.
