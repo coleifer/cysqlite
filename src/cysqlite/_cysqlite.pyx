@@ -1525,6 +1525,10 @@ cdef _AggregateWrapper get_aggregate(sqlite3_context *ctx):
     cdef:
         aggregate_ctx *agg_ctx = <aggregate_ctx *>sqlite3_aggregate_context(ctx, sizeof(aggregate_ctx))
 
+    if not agg_ctx:
+        sqlite3_result_error(ctx, b'user-defined aggregate invalid', -1)
+        return
+
     if agg_ctx.in_use:
         return <object>agg_ctx.wrapper  # Borrowed.
 
@@ -2238,6 +2242,7 @@ cdef int cyClose(sqlite3_vtab_cursor *pBase) noexcept with gil:
 
     if pCur.table_func != NULL:
         table_func = <object>pCur.table_func
+        Py_DECREF(table_func)
         pCur.table_func = NULL
 
     sqlite3_free(pCur)
