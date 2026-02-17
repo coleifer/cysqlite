@@ -2399,9 +2399,10 @@ class TestTableFunction(BaseTestCase):
         curs = self.execute('SELECT * FROM somewhat_broken(0, 3)')
         self.assertEqual(list(curs), [(0,), (1,), (2,), (3,)])
 
-        curs = self.execute('SELECT * FROM somewhat_broken(5, 8)')
-        self.assertEqual(curs.fetchone(), (5,))
-        self.assertRaises(OperationalError, lambda: list(curs))
+        for i in range(10):
+            curs = self.execute('SELECT * FROM somewhat_broken(5, 8)')
+            self.assertEqual(curs.fetchone(), (5,))
+            self.assertRaises(OperationalError, lambda: list(curs))
 
         curs = self.execute('SELECT * FROM somewhat_broken(0, 2)')
         self.assertEqual(list(curs), [(0,), (1,), (2,)])

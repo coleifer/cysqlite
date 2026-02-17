@@ -10,6 +10,8 @@ from cpython.buffer cimport PyObject_CheckBuffer
 from cpython.buffer cimport PyObject_GetBuffer
 from cpython.float cimport PyFloat_FromDouble
 from cpython.long cimport PyLong_FromLongLong
+from cpython.mem cimport PyMem_Free
+from cpython.mem cimport PyMem_Malloc
 from cpython.object cimport PyObject
 from cpython.ref cimport Py_DECREF
 from cpython.ref cimport Py_INCREF
@@ -218,11 +220,13 @@ cdef class Statement(object):
         Connection conn
         sqlite3_stmt *st
         bint is_dml
-        bytes sql
+        unicode sql
+        bytes bsql
 
-    def __cinit__(self, Connection conn, bytes sql):
+    def __cinit__(self, Connection conn, unicode sql):
         self.conn = conn
         self.sql = sql
+        self.bsql = encode(sql)
         self.st = NULL
         self.is_dml = False
         self.prepare_statement()
@@ -238,7 +242,7 @@ cdef class Statement(object):
             int rc
             Py_ssize_t nbytes
 
-        PyBytes_AsStringAndSize(self.sql, &zsql, &nbytes)
+        PyBytes_AsStringAndSize(self.bsql, &zsql, &nbytes)
         with nogil:
             rc = sqlite3_prepare_v2(self.conn.db, zsql, <int>nbytes,
                                     &(self.st), &tail)
@@ -848,13 +852,11 @@ cdef class Connection(_callable_context_manager):
         self.close()
 
     cdef Statement stmt_get(self, sql):
-        cdef:
-            bytes bsql = encode(sql)
-            Statement st
-        if bsql in self.stmt_available:
-            st = self.stmt_available.pop(bsql)
+        cdef Statement st
+        if sql in self.stmt_available:
+            st = self.stmt_available.pop(sql)
         else:
-            st = Statement(self, bsql)
+            st = Statement(self, sql)
         self.stmt_in_use[id(st)] = st
         return st
 
@@ -941,6 +943,7 @@ cdef class Connection(_callable_context_manager):
             self.stmt_release(stmt)
         else:
             stmt.finalize()
+            self.stmt_in_use.pop(id(stmt), None)
             raise_sqlite_error(self.db, 'error executing query: ')
 
     def begin(self, lock=None):
@@ -2860,7 +2863,7 @@ cdef double *get_weights(int ncol, tuple raw_weights):
     cdef:
         int argc = len(raw_weights)
         int icol
-        double *weights = <double *>malloc(sizeof(double) * ncol)
+        double *weights = <double *>PyMem_Malloc(sizeof(double) * ncol)
 
     for icol in range(ncol):
         if argc == 0:
@@ -2915,7 +2918,7 @@ def rank_lucene(py_match_info, *raw_weights):
             fieldNorms = 1.0 / sqrt(doc_length)
             score += (idf * tf * fieldNorms)
 
-    free(weights)
+    PyMem_Free(weights)
     return -1 * score
 
 
@@ -2990,7 +2993,7 @@ def rank_bm25(py_match_info, *raw_weights):
             pc_score = idf * (num / denom)
             score += (pc_score * weight)
 
-    free(weights)
+    PyMem_Free(weights)
     return -1 * score
 
 
