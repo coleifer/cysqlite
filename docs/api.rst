@@ -127,6 +127,18 @@ Connection
       Factory for creating row instances from query results, e.g. :class:`Row`.
       By default rows are returned as ``tuple`` instances.
 
+   .. attribute:: print_callback_tracebacks
+
+      Print tracebacks for exceptions raised in user-defined callbacks. Since
+      these callbacks are executed by SQLite, exceptions may not propagate in
+      cases where the SQLite callback specifies no return code (e.g. rollback
+      hooks).
+
+   .. property:: callback_error
+
+      Return the most-recent error raised inside a user-defined callback. Upon
+      reading (or when the database is closed) this value is cleared.
+
    .. method:: connect()
 
       Open connection to the database.
