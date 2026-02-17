@@ -93,6 +93,13 @@ class BaseTestCase(unittest.TestCase):
         curs = self.db.execute('select key from kv order by key')
         self.assertEqual([k for k, in curs], expected)
 
+    def assertCallbackError(self, msg, exc_type=None):
+        exc = self.db.callback_error
+        self.assertTrue(exc is not None)
+        if exc_type is not None:
+            self.assertTrue(isinstance(exc, exc_type))
+        self.assertIn(msg, exc.args[0])
+
 
 class TestModule(unittest.TestCase):
     def test_module_constants(self):
@@ -540,6 +547,97 @@ class TestExecute(BaseTestCase):
         self.db.execute('INSERT INTO test VALUES (NULL)')
         res, = self.db.execute('SELECT id FROM test').fetchone()
         self.assertTrue(res is not None)
+
+
+class TestReentrancy(BaseTestCase):
+    filename = ':memory:'
+
+    def setUp(self):
+        super(TestReentrancy, self).setUp()
+        self.create_table()
+        self.create_rows(('k1', 'v1', 1))
+
+    def test_function(self):
+        def evil(x):
+            x = self.db.execute('select ?', (x,)).value()
+            return x + x
+
+        self.db.create_function(evil, 'evil', 1)
+        for obj in (self.db, self.db.cursor()):
+            with self.assertRaises(OperationalError) as exc:
+                obj.execute('select evil(?)', (1,)).fetchone()
+
+            self.assertCallbackError('Re-entrant', OperationalError)
+
+        db2 = connect(':memory:')
+        def not_evil(x):
+            x = db2.execute('select ?', (x,)).value()
+            return x + x
+
+        self.db.create_function(not_evil, 'not_evil', 1)
+        for obj in (self.db, self.db.cursor()):
+            val = obj.execute('select not_evil(?)', (1,)).value()
+            self.assertEqual(val, 2)
+
+    def test_aggregate(self):
+        db = self.db
+
+        class Evil(object):
+            def __init__(self):
+                self.value = 0
+            def step(self, value):
+                self.value += db.execute('select ?', (value,)).value()
+            def finalize(self):
+                return self.value
+
+        self.db.create_aggregate(Evil, 'evil', 1)
+        for obj in (self.db, self.db.cursor()):
+            with self.assertRaises(OperationalError) as exc:
+                obj.execute('select evil(extra) from kv').value()
+            self.assertCallbackError('Re-entrant', OperationalError)
+
+    def test_threads(self):
+        out = []
+        def run():
+            db = connect(':memory:')
+            def dbl(a):
+                return a + a
+            db.create_function(dbl, 'dbl', 1)
+            for i in range(10):
+                out.append(db.execute('select dbl(?)', (i,)).value())
+        threads = [threading.Thread(target=run) for _ in range(3)]
+        for t in threads: t.start()
+        for t in threads: t.join()
+        self.assertEqual(len(out), 30)
+
+    def test_nested(self):
+        out = []
+        def outer(x):
+            out.append(('outer', x))
+            try:
+                self.db.execute('select inner(?)', (x,)).value()
+                out.append('unreachable')
+            except OperationalError as exc:
+                out.append(('caught', exc.args[0]))
+            return x + x
+
+        def inner(x):
+            out.append(('inner', x))
+            return x + 1
+
+        self.db.create_function(outer, 'outer', 1)
+        self.db.create_function(inner, 'inner', 1)
+
+        res = self.db.execute('select outer(?)', (2,)).value()
+        self.assertEqual(res, 4)
+
+        res = self.db.execute('select inner(?)', (100,)).value()
+        self.assertEqual(res, 101)
+
+        self.assertEqual(out, [
+            ('outer', 2),
+            ('caught', 'Re-entrant call detected.'),
+            ('inner', 100)])
 
 
 class TestQueryExecution(BaseTestCase):
@@ -1073,7 +1171,11 @@ class TestUserDefinedCallbacks(BaseTestCase):
             OperationalError,
             self.db.execute,
             'select reverse(1)')
+
         self.assertTrue(isinstance(self.db.callback_error, TypeError))
+
+        # Verify callback error is cleared after reading once.
+        self.assertTrue(self.db.callback_error is None)
 
     def test_create_function_multiple(self):
         def add(a, b):
@@ -1115,8 +1217,8 @@ class TestUserDefinedCallbacks(BaseTestCase):
         self.db.create_aggregate(BrokenInit, 'broken_init', 1)
         self.assertRaises(OperationalError, self.db.execute,
                           'select broken_init(extra) from kv')
-        self.assertTrue(isinstance(self.db.callback_error, ValueError))
-        self.assertEqual(self.db.callback_error.args[0], 'broken init')
+
+        self.assertCallbackError('broken init', ValueError)
 
     def test_aggregate_broken_step(self):
         class BrokenStep(object):
@@ -1130,8 +1232,7 @@ class TestUserDefinedCallbacks(BaseTestCase):
         self.db.create_aggregate(BrokenStep, 'broken_step', 1)
         self.assertRaises(OperationalError, self.db.execute,
                           'select broken_step(extra) from kv')
-        self.assertTrue(isinstance(self.db.callback_error, ValueError))
-        self.assertEqual(self.db.callback_error.args[0], 'broken step')
+        self.assertCallbackError('broken step', ValueError)
 
     def test_aggregate_broken_finalize(self):
         class BrokenFinalize(object):
@@ -1144,8 +1245,7 @@ class TestUserDefinedCallbacks(BaseTestCase):
         self.db.create_aggregate(BrokenFinalize, 'broken_finalize', 1)
         self.assertRaises(OperationalError, self.db.execute,
                           'select broken_finalize(extra) from kv')
-        self.assertTrue(isinstance(self.db.callback_error, ValueError))
-        self.assertEqual(self.db.callback_error.args[0], 'broken finalize')
+        self.assertCallbackError('broken finalize', ValueError)
 
     def test_create_window_function(self):
         class Sum(object):
@@ -1206,8 +1306,8 @@ class TestUserDefinedCallbacks(BaseTestCase):
                                        '1 preceding and 1 following) '
                                        'from kv order by key, extra' % name)
                 curs.fetchall()
-            self.assertTrue(isinstance(self.db.callback_error, ValueError))
-            self.assertEqual(self.db.callback_error.args[0], name)
+
+            self.assertCallbackError(name, ValueError)
 
     def test_create_collation(self):
         def case_insensitive(s1, s2):
@@ -1240,8 +1340,7 @@ class TestUserDefinedCallbacks(BaseTestCase):
         # Collations cannot trigger errors.
         self.db.execute('select * from kv order by key collate broken')
 
-        self.assertTrue(isinstance(self.db.callback_error, ValueError))
-        self.assertEqual(self.db.callback_error.args[0], 'broken')
+        self.assertCallbackError('broken', ValueError)
 
     def test_commit_hook(self):
         state = [0]
@@ -1289,8 +1388,7 @@ class TestUserDefinedCallbacks(BaseTestCase):
         with self.assertRaises(IntegrityError):
             self.db.commit()
 
-        self.assertTrue(isinstance(self.db.callback_error, TypeError))
-        self.assertEqual(self.db.callback_error.args[0], 'fail')
+        self.assertCallbackError('fail', TypeError)
 
         self.assertTrue(self.db.autocommit())
         self.assertCount(3)
@@ -1329,8 +1427,7 @@ class TestUserDefinedCallbacks(BaseTestCase):
         self.assertFalse(self.db.autocommit())
         self.db.rollback()
 
-        self.assertTrue(isinstance(self.db.callback_error, TypeError))
-        self.assertEqual(self.db.callback_error.args[0], 'rbfail')
+        self.assertCallbackError('rbfail', TypeError)
 
         self.assertTrue(self.db.autocommit())
         self.assertCount(3)
@@ -1360,11 +1457,11 @@ class TestUserDefinedCallbacks(BaseTestCase):
 
         self.db.update_hook(on_update)
         self.create_rows(('k4', 'v4', 40))
-        self.assertEqual(self.db.callback_error.args[0], 'fail 4')
+        self.assertCallbackError('fail 4', ValueError)
 
         self.db.execute('update kv set extra = extra + ? where extra < ?',
                         (1, 20))
-        self.assertEqual(self.db.callback_error.args[0], 'fail 1')
+        self.assertCallbackError('fail 1', ValueError)
 
         self.assertCount(4)  # Everything went through.
 
@@ -1413,8 +1510,8 @@ class TestUserDefinedCallbacks(BaseTestCase):
         for query in queries:
             with self.assertRaises(OperationalError):
                 self.db.execute(query)
-            self.assertTrue(isinstance(self.db.callback_error, ValueError))
-            self.assertEqual(self.db.callback_error.args[0], 'fail')
+
+            self.assertCallbackError('fail', ValueError)
 
         self.db.authorizer(None)  # Clear authorizer to verify no changes.
         self.assertCount(3)
@@ -1438,8 +1535,8 @@ class TestUserDefinedCallbacks(BaseTestCase):
             raise ValueError('trace fail')
         self.db.trace(broken, SQLITE_TRACE_ROW | SQLITE_TRACE_STMT)
         self.assertCount(3)
-        self.assertTrue(isinstance(self.db.callback_error, ValueError))
-        self.assertEqual(self.db.callback_error.args[0], 'trace fail')
+
+        self.assertCallbackError('trace fail', ValueError)
 
     def test_progress(self):
         accum = [0]
@@ -1465,8 +1562,8 @@ class TestUserDefinedCallbacks(BaseTestCase):
         self.db.progress(broken, 10)
         results = self.db.execute('select * from kv order by key').fetchall()
         self.assertEqual(len(results), 103)
-        self.assertTrue(isinstance(self.db.callback_error, ValueError))
-        self.assertEqual(self.db.callback_error.args[0], 'progress fail')
+
+        self.assertCallbackError('progress fail', ValueError)
 
     def test_exec_cb(self):
         accum = []
@@ -1494,8 +1591,7 @@ class TestUserDefinedCallbacks(BaseTestCase):
         with self.assertRaises(OperationalError):
             self.db.execute_simple('select * from kv', broken)
 
-        self.assertTrue(isinstance(self.db.callback_error, ValueError))
-        self.assertEqual(self.db.callback_error.args[0], 'broken cb')
+        self.assertCallbackError('broken cb', ValueError)
 
 
 class TestDatabaseSettings(BaseTestCase):
