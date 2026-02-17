@@ -375,7 +375,7 @@ cdef class Statement(object):
         return rc
 
     cdef int reset(self):
-        cdef int c
+        cdef int rc
         with nogil:
             rc = sqlite3_reset(self.st)
             sqlite3_clear_bindings(self.st)
