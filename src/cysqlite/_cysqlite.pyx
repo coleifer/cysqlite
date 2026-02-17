@@ -572,7 +572,6 @@ cdef class Cursor(object):
             raise ValueError('sql script must be string')
 
         while True:
-            attempted = str(zsql)
             with nogil:
                 rc = sqlite3_prepare_v2(self.conn.db, zsql, -1, &st, &zsql)
 
