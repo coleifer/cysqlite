@@ -81,9 +81,35 @@ column type of the value.
 
 .. _sqlite-converters:
 
+Converters
+^^^^^^^^^^
+
 To convert data coming going SQLite to Python, you will need to register one or
 more converters using :meth:`Connection.register_converter` or using the
-:meth:`Connection.converter` decorator. Below are some examples:
+:meth:`Connection.converter` decorator. Converters rely on the SQLite
+`sqlite3_column_decltype <https://www.sqlite.org/c3ref/column_decltype.html>`_
+API, which retrieves the declared type of the given column. cysqlite then
+applies your converter for any type that was registered.
+
+For example, to convert columns declared ``DATETIME`` back to Python datetimes,
+you might register the following:
+
+.. code-block:: python
+
+   db = cysqlite.connect(':memory:')
+
+   db.register_converter('datetime', datetime.datetime.fromisoformat)
+
+   # Or use a decorator:
+   @db.converter('datetime')
+   def convert_datetime(value):
+       # Converts our ISO-formatted date string into a python datetime.
+       return datetime.datetime.fromisoformat(value)
+
+If the value is ``NULL`` then the convert is **not** applied, so you do not
+need to test for ``value is None``.
+
+Below are some examples:
 
 .. code-block:: python
 

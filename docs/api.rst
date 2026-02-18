@@ -143,7 +143,11 @@ Connection
 
       Register a converter for non-standard data-types declared in SQLite, e.g.
       ``DATETIME`` or ``NUMERIC(x, y)``. SQLite can only natively store a
-      handful of data-types
+      handful of data-types (see :ref:`sqlite-notes` for details).
+
+      The ``fn`` function accepts a single value and converts it. ``fn(value)``
+      will **not** be called if the value is ``None``, so you do not need to
+      test for ``value is None`` in your converter functions.
 
       :param str data_type: declared SQLite data-type to apply conversion to.
       :param fn: ``callable`` that accepts a single value and converts it.
