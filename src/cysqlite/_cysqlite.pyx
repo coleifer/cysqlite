@@ -8,6 +8,7 @@ from cpython.buffer cimport PyBuffer_Release
 from cpython.buffer cimport PyBUF_CONTIG_RO
 from cpython.buffer cimport PyObject_CheckBuffer
 from cpython.buffer cimport PyObject_GetBuffer
+from cpython.dict cimport PyDict_Check
 from cpython.float cimport PyFloat_FromDouble
 from cpython.long cimport PyLong_FromLongLong
 from cpython.mem cimport PyMem_Free
@@ -15,6 +16,7 @@ from cpython.mem cimport PyMem_Malloc
 from cpython.object cimport PyObject
 from cpython.ref cimport Py_DECREF
 from cpython.ref cimport Py_INCREF
+from cpython.tuple cimport PyTuple_Check
 from cpython.tuple cimport PyTuple_New
 from cpython.tuple cimport PyTuple_GET_SIZE
 from cpython.tuple cimport PyTuple_SET_ITEM
@@ -305,10 +307,10 @@ cdef class Statement(object):
         pc = sqlite3_bind_parameter_count(self.st)
 
         # If params were passed as a dict, convert to a list.
-        if isinstance(params, dict):
+        if PyDict_Check(params):
             params = self._convert_dict_to_params(params, pc)
 
-        if not isinstance(params, tuple):
+        if not PyTuple_Check(params):
             tparams = tuple(params)
         else:
             tparams = <tuple>params
