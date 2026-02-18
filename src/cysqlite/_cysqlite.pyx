@@ -477,6 +477,7 @@ cdef class Statement(object):
         return accum
 
 
+@cython.final
 cdef class Cursor(object):
     cdef:
         readonly Connection conn
@@ -717,6 +718,7 @@ cdef class Cursor(object):
         return [row[0] for row in self.description]
 
 
+@cython.final
 cdef class Connection(_callable_context_manager):
     cdef:
         sqlite3 *db
