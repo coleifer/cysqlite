@@ -73,9 +73,56 @@ Examples:
    # ('text',    '2026-03-04')
    # ('text',    '0c4ca10a-56ab-470a-9357-d28366d97ceb')
 
-At the time of writing, no special attempts at type inference are applied to
-data coming **from** SQLite. As you can see in the above example, all our
-Python values were coerced to reasonable SQLite-friendly representations. But
-that richness is lost when going from SQLite to Python without specific helpers
-like the *converters* in ``sqlite3``. A future release may add converters for
-data going from SQLite to Python.
+By default, no special attempts at type inference are applied to data coming
+**from** SQLite. As you can see in the above example, all our Python values
+were coerced to reasonable SQLite-friendly representations. But that richness
+is lost when going from SQLite to Python without specific helpers that read the
+column type of the value.
+
+.. _sqlite-converters:
+
+To convert data coming going SQLite to Python, you will need to register one or
+more converters using :meth:`Connection.register_converter` or using the
+:meth:`Connection.converter` decorator. Below are some examples:
+
+.. code-block:: python
+
+   db = cysqlite.connect(':memory:')
+
+   @db.converter('datetime')
+   def convert_datetime(value):
+       # Converts our ISO-formatted date string into a python datetime.
+       return datetime.datetime.fromisoformat(value)
+
+   # Automatically parse and load data declared as JSON.
+   db.register_converter('json', json.loads)
+
+   # Handle decimal data.
+   @db.converter('numeric')
+   def convert_numeric(value):
+       return Decimal(value).quantize(Decimal('1.00'))
+
+   db.execute('create table vals (ts datetime, js json, dec numeric(10, 2))')
+
+   # Create a TZ-aware datetime and a JSON object.
+   ts = datetime.datetime(2026, 1, 2, 3, 4, 5).astimezone(datetime.timezone.utc)
+   js = {'key': {'nested': 'value'}, 'arr': ['i0', 1, 2., None]}
+   dec = Decimal('1.3')
+
+   # When we INSERT the JSON, note that we need to dump it to string.
+   db.execute('insert into vals (ts, js, dec) values (?, ?, ?)',
+              (ts, json.dumps(js), dec))
+
+   # When reading back the data, it is converted automatically based on
+   # the declared column types.
+   row = db.execute_one('select * from vals')
+   assert row == (ts, js, dec)
+
+The converter accepts a ``data_type`` and uses the following rules for matching
+a specified data-type to what SQLite tells us:
+
+* Matching is case-insensitive, e.g. ``JSON`` or ``json`` is fine.
+* If a registered data-type is a complete match, use it.
+* Otherwise split on the first whitespace or ``"("`` character and look for
+  that, e.g. ``NUMERIC(10, 2)`` will match our registered ``numeric``
+  converter.

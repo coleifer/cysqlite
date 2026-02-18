@@ -139,6 +139,85 @@ Connection
       Return the most-recent error raised inside a user-defined callback. Upon
       reading (or when the database is closed) this value is cleared.
 
+   .. method:: register_converter(data_type, fn)
+
+      Register a converter for non-standard data-types declared in SQLite, e.g.
+      ``DATETIME`` or ``NUMERIC(x, y)``. SQLite can only natively store a
+      handful of data-types
+
+      :param str data_type: declared SQLite data-type to apply conversion to.
+      :param fn: ``callable`` that accepts a single value and converts it.
+
+      Example:
+
+      .. code-block:: python
+
+         db = cysqlite.connect(':memory:')
+
+         @db.converter('datetime')
+         def convert_datetime(value):
+             # Converts our ISO-formatted date string into a python datetime.
+             return datetime.datetime.fromisoformat(value)
+
+         # Automatically parse and load data declared as JSON.
+         db.register_converter('json', json.loads)
+
+         # Handle decimal data.
+         @db.converter('numeric')
+         def convert_numeric(value):
+             return Decimal(value).quantize(Decimal('1.00'))
+
+         db.execute('create table vals (ts datetime, js json, dec numeric(10, 2))')
+
+         # Create a TZ-aware datetime, a JSON object and a Decimal.
+         ts = datetime.datetime(2026, 1, 2, 3, 4, 5).astimezone(datetime.timezone.utc)
+         js = {'key': {'nested': 'value'}, 'arr': ['i0', 1, 2., None]}
+         dec = Decimal('1.3')
+
+         # When we INSERT the JSON, note that we need to dump it to string.
+         db.execute('insert into vals (ts, js, dec) values (?, ?, ?)',
+                    (ts, json.dumps(js), dec))
+
+         # When reading back the data, it is converted automatically based on
+         # the declared column types.
+         row = db.execute_one('select * from vals')
+         assert row == (ts, js, dec)
+
+      The converter ``data_type`` uses the following rules for matching what
+      SQLite tells us:
+
+      * Matching is case-insensitive, e.g. ``JSON`` or ``json`` is fine.
+      * If a registered data-type is a complete match, use it.
+      * Otherwise split on the first whitespace or ``"("`` character and look for
+        that, e.g. ``NUMERIC(10, 2)`` will match our registered ``numeric``
+        converter.
+
+      .. seealso::  :ref:`sqlite-notes` for more information on SQLite data-types.
+
+   .. method:: converter(data_type)
+
+      Decorator for registering user-defined converters.
+
+      :param str data_type: declared SQLite data-type to apply conversion to.
+
+      .. code-block:: python
+
+         db = cysqlite.connect(':memory:')
+
+         @db.converter('datetime')
+         def convert_datetime(value):
+             # Converts our ISO-formatted date string into a python datetime.
+             return datetime.datetime.fromisoformat(value)
+
+      .. seealso:: :meth:`Connection.register_converter`
+
+   .. method:: unregister_converter(data_type)
+
+      Unregister converter for the given data type.
+
+      :param str data_type: declared SQLite data-type to apply conversion to.
+      :return: True or False if data-type was found and removed.
+
    .. method:: connect()
 
       Open connection to the database.
