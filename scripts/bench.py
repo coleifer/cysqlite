@@ -39,6 +39,14 @@ def test_bind_small(db):
         for i in range(50000):
             db.execute(sql, params)
 
+def test_bind_dict(db):
+    params = {'k1': 'a' * 256, 'k2': b'b' * 32, 'k3': 1, 'k4': 2., 'k5': None}
+    sql = 'select :k1, :k2, :k3, :k4, :k5'
+
+    with measure(db, 'bind (dict)'):
+        for i in range(50000):
+            db.execute(sql, params)
+
 def test_column(db):
     values = list(range(400))
     cols = ', '.join(['col%d' % i for i in range(len(values))])
@@ -86,6 +94,9 @@ test_bind(cy_db)
 
 test_bind_small(sq3_db)
 test_bind_small(cy_db)
+
+test_bind_dict(sq3_db)
+test_bind_dict(cy_db)
 
 test_column(sq3_db)
 test_column(cy_db)
