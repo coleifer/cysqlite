@@ -9,6 +9,7 @@ from cpython.buffer cimport PyBUF_CONTIG_RO
 from cpython.buffer cimport PyObject_CheckBuffer
 from cpython.buffer cimport PyObject_GetBuffer
 from cpython.dict cimport PyDict_Check
+from cpython.dict cimport PyDict_GetItem
 from cpython.float cimport PyFloat_FromDouble
 from cpython.long cimport PyLong_FromLongLong
 from cpython.mem cimport PyMem_Free
@@ -264,10 +265,8 @@ cdef class Statement(object):
         cdef const char* pos = tail
         while pos[0] != 0:
             # Ignore whitespace and semi-colon.
-            if pos[0] == 32 or pos[0] == 9 or pos[0] == 10 or pos[0] == 13 or \
-               pos[0] == 59:
-                pass
-            else:
+            if not (pos[0] == 32 or pos[0] == 9 or pos[0] == 10 or \
+                    pos[0] == 13 or pos[0] == 59):
                 return 1
             pos += 1
         return 0
@@ -277,7 +276,8 @@ cdef class Statement(object):
             int i
             str bind_name
             const char *zbind_name
-            list out = []
+            list out = [None] * pc
+            PyObject *item
 
         for i in range(1, pc + 1):
             zbind_name = sqlite3_bind_parameter_name(self.st, i)
@@ -287,10 +287,12 @@ cdef class Statement(object):
             if not bind_name:
                 raise ProgrammingError('error: binding %s name could not be '
                                        'determined' % i)
-            elif bind_name not in params:
+
+            item = PyDict_GetItem(params, bind_name)
+            if item is NULL:
                 raise OperationalError('error: "%s" parameter not found' %
                                        bind_name)
-            out.append(params[bind_name])
+            out[i - 1] = <object>item
 
         return tuple(out)
 
@@ -395,37 +397,47 @@ cdef class Statement(object):
         self.st = NULL
         return 0
 
-    cdef get_row_converters(self, dict mapping):
+    cdef list get_row_converters(self, dict mapping):
         cdef:
             const char *decltype
             int i, l, ncols = sqlite3_data_count(self.st)
-            list converters = []
+            list converters = [None] * ncols
 
         for i in range(ncols):
-            converters.append(None)
             decltype = sqlite3_column_decltype(self.st, i)
-            if decltype != NULL:
-                l = 0
-                while (decltype[l] != 32 and decltype[l] != 0 and
-                       decltype[l] != 40):
-                    l += 1
-                if l > 0:
-                    name = decode(decltype[:l]).upper()
+            if decltype == NULL:
+                continue
+
+            l = 0
+            while (decltype[l] != 32 and decltype[l] != 0 and
+                   decltype[l] != 40):
+                l += 1
+            if l == 0:
+                continue
+
+            name = PyUnicode_DecodeUTF8(decltype, l, NULL)
+            if name is None:
+                continue
+
+            name = (<str>name).upper()
+            if name in mapping:
+                converters[i] = mapping[name]
+            else:
+                name = PyUnicode_FromString(decltype)
+                if name is not None:
+                    name = (<str>name).upper()
                     if name in mapping:
-                        converters[-1] = mapping[name]
-                    else:
-                        name = decode(decltype).upper()
-                        if name in mapping:
-                            converters[-1] = mapping[name]
+                        converters[i] = mapping[name]
 
         return converters
 
-    cdef get_row_data(self, list row_converters):
+    cdef tuple get_row_data(self, list row_converters):
         cdef:
             int i
             int ncols = sqlite3_data_count(self.st)
             tuple result = PyTuple_New(ncols)
             object value
+            bint has_converters = (row_converters is not None)
 
         for i in range(ncols):
             coltype = sqlite3_column_type(self.st, i)
@@ -451,9 +463,10 @@ cdef class Statement(object):
                     'error: cannot read parameter %d: type = %r'
                     % (i, coltype))
 
-            if row_converters is not None and row_converters[i] is not None \
-               and value is not None:
-                value = row_converters[i](value)
+            if has_converters and value is not None:
+                converter = row_converters[i]
+                if converter is not None:
+                    value = converter(value)
 
             # If we were in C we wouldn't need to do this, but Cython sees that
             # we are losing the reference to the object while looping and
@@ -470,16 +483,17 @@ cdef class Statement(object):
     cdef column_count(self):
         return sqlite3_column_count(self.st)
 
-    cdef columns(self):
+    cdef list columns(self):
         cdef:
-            bytes col_name
-            int col_count, i
-            list accum = []
+            const char *col_name
+            int i, col_count = sqlite3_column_count(self.st)
+            list accum = [None] * col_count
 
         col_count = sqlite3_column_count(self.st)
         for i in range(col_count):
             col_name = sqlite3_column_name(self.st, i)
-            accum.append(decode(col_name))
+            col = PyUnicode_FromString(col_name) if col_name != NULL else None
+            accum[i] = col
         return accum
 
 
@@ -511,7 +525,15 @@ cdef class Cursor(object):
             self.stmt = None
 
     cdef set_description(self):
-        self.description = tuple([(name,) for name in self.stmt.columns()])
+        cdef:
+            list columns = self.stmt.columns()
+            list description = []
+            str name
+
+        for name in columns:
+            description.append((name,))
+
+        self.description = tuple(description)
 
     cpdef execute(self, sql, params=None):
         if self.conn.db == NULL:
@@ -528,7 +550,7 @@ cdef class Cursor(object):
         self.lastrowid = None
 
         self.stmt = self.conn.stmt_get(sql)
-        if params:
+        if params is not None:
             self.stmt.bind(params)
         else:
             self.stmt.bind(())
@@ -559,12 +581,11 @@ cdef class Cursor(object):
     cpdef executemany(self, sql, seq_of_params=None):
         if not seq_of_params:
             raise ValueError('Cannot call executemany() without parameters.')
-        if self.conn.db == NULL:
+        elif self.conn.db == NULL:
             self.stmt = None
             self.executing = False
             raise OperationalError('Database is closed.')
-
-        if self.executing:
+        elif self.executing:
             self.finish()
 
         self.description = None
