@@ -1678,8 +1678,8 @@ Blob
 
    .. method:: write(data)
 
-      :param data: Data to be written
-      :type data: buffer (e.g. bytes, bytearray, memoryview), str (will be encoded as UTF8)
+      :param buffer data: Data to be written: buffer (e.g. ``bytes``,
+         ``bytearray``, ``memoryview``) or ``str`` (will be encoded as UTF8)
 
       Writes the given data, starting at the current position in the file. If
       the data is too large for the blob to store, raises ``ValueError``.
