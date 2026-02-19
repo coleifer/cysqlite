@@ -4,7 +4,9 @@ from cpython.bytes cimport PyBytes_AS_STRING
 from cpython.bytes cimport PyBytes_AsString
 from cpython.bytes cimport PyBytes_AsStringAndSize
 from cpython.bytes cimport PyBytes_FromStringAndSize
+from cpython.buffer cimport Py_buffer
 from cpython.buffer cimport PyBuffer_Release
+from cpython.buffer cimport PyBUF_CONTIG
 from cpython.buffer cimport PyBUF_CONTIG_RO
 from cpython.buffer cimport PyObject_CheckBuffer
 from cpython.buffer cimport PyObject_GetBuffer
@@ -44,6 +46,7 @@ from libc.string cimport memset
 from collections import namedtuple
 from random import randint
 import datetime
+import io as _io
 import traceback
 import uuid
 import weakref
@@ -2064,18 +2067,18 @@ cdef class Atomic(_callable_context_manager):
         return self.txn.__exit__(exc_type, exc_val, exc_tb)
 
 
-cdef inline int _check_blob_closed(Blob blob) except -1:
-    if not blob.conn.db:
+cdef inline int _check_blob(Blob blob) except -1:
+    if blob.blob == NULL:
+        raise ValueError('Cannot operate on closed blob.')
+    if blob.conn.db == NULL:
         raise OperationalError('Database closed.')
-    if not blob.blob:
-        raise OperationalError('Cannot operate on closed blob.')
     return 0
 
 
 cdef class Blob(object):
     cdef:
         int offset
-        int flags
+        bint _read_only
         Connection conn
         sqlite3_blob *blob
         object __weakref__
@@ -2086,6 +2089,7 @@ cdef class Blob(object):
             bytes btable = encode(table)
             bytes bcolumn = encode(column)
             bytes bdatabase = encode(database or 'main')
+            int flags = 0 if read_only else 1
             int rc
             sqlite3_blob *blob
 
@@ -2093,7 +2097,7 @@ cdef class Blob(object):
             raise OperationalError('cannot operate on closed database.')
 
         self.conn = conn
-        self.flags = 0 if read_only else 1
+        self._read_only = read_only
 
         rc = sqlite3_blob_open(
             self.conn.db,
@@ -2101,7 +2105,7 @@ cdef class Blob(object):
             <const char *>btable,
             <const char *>bcolumn,
             <sqlite3_int64>rowid,
-            self.flags,
+            flags,
             &blob)
 
         if rc != SQLITE_OK:
@@ -2115,7 +2119,7 @@ cdef class Blob(object):
         self.conn.blob_in_use[id(self)] = self
 
     cdef _close(self):
-        if self.blob:
+        if self.blob != NULL:
             sqlite3_blob_close(self.blob)
             self.blob = NULL
             self.conn.blob_in_use.pop(id(self), None)
@@ -2123,46 +2127,130 @@ cdef class Blob(object):
     def __dealloc__(self):
         self._close()
 
+    @property
+    def closed(self):
+        return self.blob == NULL
+
+    def close(self):
+        self._close()
+
     def __enter__(self):
+        _check_blob(self)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
         return False
 
-    def __len__(self):
-        _check_blob_closed(self)
-        return sqlite3_blob_bytes(self.blob)
+    def fileno(self):
+        raise _io.UnsupportedOperation('fileno')
+
+    def flush(self):
+        pass
+
+    def isatty(self):
+        return False
 
     def readable(self):
         return True
 
     def writable(self):
-        return self.flags != 0
+        return not self._read_only
 
     def seekable(self):
         return True
 
-    def read(self, n=None):
-        _check_blob_closed(self)
+    def truncate(self, size=None):
+        raise _io.UnsupportedOperation('truncate')
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        _check_blob(self)
+        line = self.readline()
+        if not line:
+            raise StopIteration
+        return line
+
+    def readline(self, size=-1):
+        _check_blob(self)
         cdef:
-            bytes pybuf
-            int length = -1
-            int size
-            char *buf
+            int remaining = sqlite3_blob_bytes(self.blob) - self.offset
+            int limit, n_read, i
+            bytes chunk
+            char *p
 
-        if n is not None:
-            length = n
-
-        size = sqlite3_blob_bytes(self.blob)
-        if self.offset == size or length == 0:
+        if remaining == 0:
             return b''
 
-        if length < 0:
-            length = size - self.offset
+        if size < 0 or size > remaining:
+            limit = remaining
+        else:
+            limit = size
 
-        if self.offset + length > size:
-            length = size - self.offset
+        if limit == 0:
+            return b''
+
+        chunk = PyBytes_FromStringAndSize(NULL, limit)
+        p = PyBytes_AS_STRING(chunk)
+        if sqlite3_blob_read(self.blob, p, limit, self.offset):
+            self._close()
+            raise_sqlite_error(self.conn.db, 'error reading from blob: ')
+
+        n_read = limit
+        for i in range(limit):
+            if p[i] == 10:
+                n_read = i + 1  # Include newline.
+                break
+
+        self.offset += n_read
+        return chunk if n_read == limit else chunk[:n_read]
+
+    def readlines(self, hint=-1):
+        _check_blob(self)
+        cdef:
+            list lines = []
+            int total = 0
+
+        while True:
+            line = self.readline()
+            if not line:
+                break
+            lines.append(line)
+            total += len(line)
+            if hint >= 0 and total >= hint:
+                break
+
+        return lines
+
+    def writelines(self, lines):
+        _check_blob(self)
+        if self._read_only:
+            raise _io.UnsupportedOperation('write')
+        cdef int n = 0
+        for line in lines:
+            n += self.write(line)
+        return n
+
+    def read(self, size=-1):
+        _check_blob(self)
+        cdef:
+            bytes pybuf
+            int length
+            int blob_size = sqlite3_blob_bytes(self.blob)
+            char *buf
+
+        if size is None or size < 0:
+            length = blob_size - self.offset
+        else:
+            length = size
+
+        if length == 0 or self.offset >= blob_size:
+            return b''
+
+        if self.offset + length > blob_size:
+            length = blob_size - self.offset
 
         pybuf = PyBytes_FromStringAndSize(NULL, length)
         buf = PyBytes_AS_STRING(pybuf)
@@ -2173,42 +2261,49 @@ cdef class Blob(object):
         self.offset += length
         return pybuf
 
-    def seek(self, offset, frame_of_reference=0):
-        _check_blob_closed(self)
-        cdef int size
-        size = sqlite3_blob_bytes(self.blob)
-        if frame_of_reference == 0:
-            if offset < 0 or offset > size:
-                raise ValueError('seek() offset outside of valid range.')
-            self.offset = offset
-        elif frame_of_reference == 1:
-            if self.offset + offset < 0 or self.offset + offset > size:
-                raise ValueError('seek() offset outside of valid range.')
-            self.offset += offset
-        elif frame_of_reference == 2:
-            if size + offset < 0:
-                raise ValueError('seek() offset outside of valid range.')
-            self.offset = size + offset
-        else:
-            raise ValueError('seek() frame of reference must be 0, 1 or 2.')
+    def readall(self):
+        return self.read()
 
-    def tell(self):
-        _check_blob_closed(self)
-        return self.offset
+    def readinto(self, b):
+        _check_blob(self)
+        cdef:
+            Py_buffer view
+            int remaining = sqlite3_blob_bytes(self.blob) - self.offset
+            int n_read
+
+        if remaining == 0:
+            return 0
+
+        if PyObject_GetBuffer(b, &view, PyBUF_CONTIG):
+            raise TypeError('readinto() requires a writeable contiguous '
+                            'buffer, e.g. bytearray or memoryview.')
+        n_read = remaining if <int>view.len >= remaining else <int>view.len
+        try:
+            if sqlite3_blob_read(self.blob, view.buf, n_read, self.offset):
+                self._close()
+                raise_sqlite_error(self.conn.db, 'error reading from blob: ')
+        finally:
+            PyBuffer_Release(&view)
+
+        self.offset += n_read
+        return n_read
 
     def write(self, data):
-        _check_blob_closed(self)
+        _check_blob(self)
+        if self._read_only:
+            raise _io.UnsupportedOperation('write')
+
         cdef:
             const void *buf = NULL
-            int n, size
+            int n, blob_size
             Py_buffer view
             Py_ssize_t buflen
             bint buffer_acquired = False
 
         if not data:
-            return
+            return 0
 
-        size = sqlite3_blob_bytes(self.blob)
+        blob_size = sqlite3_blob_bytes(self.blob)
 
         if PyObject_CheckBuffer(data):
             if PyObject_GetBuffer(data, &view, PyBUF_CONTIG_RO):
@@ -2221,36 +2316,67 @@ cdef class Blob(object):
             if buf == NULL:
                 raise ValueError('str could not be encoded as UTF8')
         else:
-            raise ValueError('Blob.write() data must be buffer, bytes or str')
-
-        if buflen > <Py_ssize_t>INT_MAX:
-            raise ValueError('Data is too large')
-        n = <int>buflen
-        if (n + self.offset) < self.offset:
-            raise ValueError('Data is too large (integer wrap)')
-        if (n + self.offset) > size:
-            raise ValueError('Data would go beyond end of blob %s > %s' % (
-                n + self.offset, size))
+            raise TypeError('Blob.write() data must be buffer, bytes or str')
 
         try:
+            if buflen > <Py_ssize_t>INT_MAX:
+                raise ValueError('Data is too large')
+            n = <int>buflen
+            if n > 0 and (n + self.offset) < self.offset:
+                raise ValueError('Data is too large (integer wrap)')
+            if (n + self.offset) > blob_size:
+                raise ValueError('Data would go beyond end of blob '
+                                 '(offset=%d, nbytes=%d, blob_size=%d)' %
+                                 (self.offset, n, blob_size))
+
             if sqlite3_blob_write(self.blob, buf, n, self.offset):
                 raise_sqlite_error(self.conn.db, 'error writing to blob: ')
         finally:
             if buffer_acquired:
                 PyBuffer_Release(&view)
 
-        self.offset += <int>n
+        self.offset += n
+        return n
 
-    def close(self):
-        self._close()
+    def seek(self, offset, whence=0):
+        _check_blob(self)
+        cdef:
+            int blob_size = sqlite3_blob_bytes(self.blob)
+            int new_pos
+
+        if whence == 0:
+            new_pos = offset
+        elif whence == 1:
+            new_pos = self.offset + offset
+        elif whence == 2:
+            new_pos = blob_size + offset
+        else:
+            raise ValueError('seek() whence must be 0, 1 or 2.')
+
+        if new_pos < 0 or new_pos > blob_size:
+            raise ValueError('seek() offset outside of valid range.')
+
+        self.offset = new_pos
+        return self.offset
+
+    def tell(self):
+        _check_blob(self)
+        return self.offset
+
+    def __len__(self):
+        _check_blob(self)
+        return sqlite3_blob_bytes(self.blob)
 
     def reopen(self, rowid):
-        _check_blob_closed(self)
+        _check_blob(self)
         self.offset = 0
         if sqlite3_blob_reopen(self.blob, <sqlite3_int64>rowid):
             self._close()
             raise_sqlite_error(self.conn.db, 'unable to reopen blob: ')
 
+
+# Support RawIOBase.
+_io.RawIOBase.register(Blob)
 
 # The cysqlite_vtab struct embeds the base sqlite3_vtab struct, and adds a
 # field to store a reference to the Python implementation.

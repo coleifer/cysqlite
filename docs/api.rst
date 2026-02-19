@@ -1631,6 +1631,10 @@ Blob
    :param bool read_only: Prevent any modifications to the blob data.
    :param str database: Name of database containing table, *optional*.
 
+   .. note:: ``Blob`` implements ``io.RawIOBase``.
+
+   Example:
+
    .. code-block:: python
 
       db = connect(':memory:')
@@ -1654,19 +1658,23 @@ Blob
       bytes_written = blob.tell()
       blob.close()
 
-   .. method:: read(n=None)
+   .. property:: closed
 
-      :param int n: Only read up to *n* bytes from current position in file.
+      Whether the blob handle is closed.
+
+   .. method:: read(size=-1)
+
+      :param int size: Only read up to *n* bytes from current position in file.
       :return: Blob data
       :rtype: bytes
 
       Read up to *n* bytes from the current position in the blob file. If *n*
-      is not specified, the entire blob will be read.
+      is less than zero, the entire blob will be read.
 
-   .. method:: seek(offset, frame_of_reference=0)
+   .. method:: seek(offset, whence=0)
 
       :param int offset: Seek to the given offset in the file.
-      :param int frame_of_reference: Seek relative to the specified frame of reference.
+      :param int whence: Seek relative to the specified frame of reference.
 
       Values for ``whence``:
 
@@ -1684,9 +1692,15 @@ Blob
 
       :param buffer data: Data to be written: buffer (e.g. ``bytes``,
          ``bytearray``, ``memoryview``) or ``str`` (will be encoded as UTF8)
+      :return: Number of bytes written.
+      :rtype: int
 
       Writes the given data, starting at the current position in the file. If
       the data is too large for the blob to store, raises ``ValueError``.
+
+   .. method:: __len__()
+
+      Return the length of the blob.
 
    .. method:: close()
 
@@ -1699,6 +1713,45 @@ Blob
       If a blob has already been opened for a given table/column, you can use
       the :meth:`~Blob.reopen` method to re-use the same :class:`Blob`
       object for accessing multiple rows in the table.
+
+   .. method:: readline(size=-1)
+
+      :param int size: Maximum number of bytes to read.
+      :return: Line of data from the current offset.
+      :rtype: bytes
+
+   .. method:: readlines(hint=-1)
+
+      :param int hint: Maximum number of bytes to read.
+      :return: Lines of data from the current offset.
+      :rtype: list
+
+   .. method:: readall()
+
+      Read entire blob.
+
+   .. method:: readinto(b)
+
+      :param buffer b: Read contents of blob into the given writeable buffer.
+      :return: Number of bytes read.
+      :rtype: int
+
+   .. method:: writelines(lines)
+
+      :param lines: any sequence of lines to write.
+      :return: Number of bytes written
+      :rtype: int
+
+   .. method:: __iter__()
+
+      Allow iteration over the lines of data in the blob.
+
+   .. method:: __enter__()
+               __exit__(exc_type, exc_val, exc_tb)
+
+      Allow the blob to be used as a context-manager, closing when the wrapped
+      block exits.
+
 
 TableFunction
 -------------

@@ -1,6 +1,7 @@
 import datetime
 import decimal
 import glob
+import io
 import json
 import os
 import re
@@ -2100,6 +2101,51 @@ class TestBlob(BaseTestCase):
         data = blob.read(16)
         self.assertEqual(data, b'zzzxyyyyyyyyyyyy')
 
+    def test_blob_iobase_methods(self):
+        rowid64 = self.create_blob_row(64)
+        blob = Blob(self.db, 'register', 'data', rowid64)
+
+        lines = b'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\n'
+        blob.write(lines)
+        self.assertEqual(blob.tell(), 35)
+
+        blob.seek(0)
+        lines = blob.readlines(15)
+        self.assertEqual(lines, [
+            b'Line 1\n',
+            b'Line 2\n',
+            b'Line 3\n'])
+        self.assertEqual(blob.tell(), 21)
+
+        self.assertEqual(blob.readline(), b'Line 4\n')
+        blob.seek(21)
+
+        lines = [b'Line 4x\n', b'Line 5x\n', b'Line 6x\n']
+        blob.writelines(lines)
+        self.assertEqual(blob.tell(), 45)
+
+        blob.seek(0)
+        self.assertEqual(list(blob), [
+            b'Line 1\n',
+            b'Line 2\n',
+            b'Line 3\n',
+            b'Line 4x\n',
+            b'Line 5x\n',
+            b'Line 6x\n',
+            b'\x00' * (64 - 45),
+        ])
+
+        blob.seek(7)
+        buf = bytearray(14)
+        n = blob.readinto(buf)
+        self.assertEqual(n, 14)
+        self.assertEqual(bytes(buf), b'Line 2\nLine 3\n')
+
+        buf = bytearray(0)
+        n = blob.readinto(buf)
+        self.assertEqual(n, 0)
+        self.assertEqual(bytes(buf), b'')
+
     def test_blob_exceed_size(self):
         rowid = self.create_blob_row(16)
 
@@ -2138,14 +2184,14 @@ class TestBlob(BaseTestCase):
         self.assertEqual(len(blob), 4)
         blob.close()
 
-        with self.assertRaises(OperationalError):
+        with self.assertRaises(ValueError):
             len(blob)
 
-        self.assertRaises(OperationalError, blob.read)
-        self.assertRaises(OperationalError, blob.write, b'foo')
-        self.assertRaises(OperationalError, blob.seek, 0, 0)
-        self.assertRaises(OperationalError, blob.tell)
-        self.assertRaises(OperationalError, blob.reopen, rowid)
+        self.assertRaises(ValueError, blob.read)
+        self.assertRaises(ValueError, blob.write, b'foo')
+        self.assertRaises(ValueError, blob.seek, 0, 0)
+        self.assertRaises(ValueError, blob.tell)
+        self.assertRaises(ValueError, blob.reopen, rowid)
 
     def test_blob_db_closed(self):
         rowid = self.create_blob_row(4)
@@ -2157,11 +2203,11 @@ class TestBlob(BaseTestCase):
             if i == 1: self.db.connect()  # Reconnect for 2nd iteration.
             # Cannot operate on the blob - db was closed, even if it was
             # reopened later the handle is invalid.
-            self.assertRaises(OperationalError, blob.read)
-            self.assertRaises(OperationalError, blob.write, b'foo')
-            self.assertRaises(OperationalError, blob.seek, 0, 0)
-            self.assertRaises(OperationalError, blob.tell)
-            self.assertRaises(OperationalError, blob.reopen, rowid)
+            self.assertRaises(ValueError, blob.read)
+            self.assertRaises(ValueError, blob.write, b'foo')
+            self.assertRaises(ValueError, blob.seek, 0, 0)
+            self.assertRaises(ValueError, blob.tell)
+            self.assertRaises(ValueError, blob.reopen, rowid)
 
     def test_blob_readonly(self):
         rowid = self.create_blob_row(4)
@@ -2174,7 +2220,7 @@ class TestBlob(BaseTestCase):
         blob = self.db.blob_open('register', 'data', rowid, True)
         self.assertEqual(blob.read(), b'huey')
         blob.seek(0)
-        with self.assertRaises(OperationalError):
+        with self.assertRaises(io.UnsupportedOperation):
             blob.write(b'meow')
 
         # BLOB is read-only.
