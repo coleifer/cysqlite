@@ -19,7 +19,7 @@ from cysqlite._constants import *
 from cysqlite.exceptions import *
 
 
-version = __version__ = '0.1.9'
+version = __version__ = '0.2.0'
 version_info = tuple(int(i) for i in version.split('.'))
 
 # DB-API 2.0 module attributes.
