@@ -249,11 +249,14 @@ cdef class Statement(object):
 
         # When sqlite3_prepare_v2 is called with empty SQL no error is reported
         # but ppStmt will be NULL.
-        if rc != SQLITE_OK or self.st == NULL:
+        if rc != SQLITE_OK:
             if self.st:
                 sqlite3_finalize(self.st)
                 self.st = NULL
             raise_sqlite_error(self.conn.db, 'error compiling statement: ')
+
+        if self.st == NULL:
+            raise ProgrammingError('Empty SQL statement.')
 
         if self._check_tail(tail):
             sqlite3_finalize(self.st)
@@ -331,7 +334,7 @@ cdef class Statement(object):
             elif isinstance(param, unicode):
                 buf = PyUnicode_AsUTF8AndSize(param, &nbytes)
                 if buf == NULL:
-                    raise UnicodeDecodeError('Invalid UTF8 in text data.')
+                    raise ValueError('Invalid UTF8 data')
                 rc = sqlite3_bind_text64(self.st, i + 1, buf,
                                          <sqlite3_uint64>nbytes,
                                          SQLITE_TRANSIENT,
@@ -365,7 +368,7 @@ cdef class Statement(object):
                     param = str(param)
                 buf = PyUnicode_AsUTF8AndSize(param, &nbytes)
                 if buf == NULL:
-                    raise UnicodeDecodeError('Invalid UTF8 in text data.')
+                    raise ValueError('Invalid UTF8 data')
                 rc = sqlite3_bind_text64(self.st, i + 1, buf,
                                          <sqlite3_uint64>nbytes,
                                          SQLITE_TRANSIENT,
@@ -490,7 +493,6 @@ cdef class Statement(object):
             int i, col_count = sqlite3_column_count(self.st)
             list accum = [None] * col_count
 
-        col_count = sqlite3_column_count(self.st)
         for i in range(col_count):
             col_name = sqlite3_column_name(self.st, i)
             col = PyUnicode_FromString(col_name) if col_name != NULL else None
@@ -638,9 +640,11 @@ cdef class Cursor(object):
         else:
             raise ValueError('sql script must be string')
 
+        tail = zsql
+
         while True:
             with nogil:
-                rc = sqlite3_prepare_v2(self.conn.db, zsql, -1, &st, &zsql)
+                rc = sqlite3_prepare_v2(self.conn.db, tail, -1, &st, &tail)
 
             if rc != SQLITE_OK:
                 raise_sqlite_error(self.conn.db, 'error executing query: ')
@@ -665,7 +669,7 @@ cdef class Cursor(object):
             if rc != SQLITE_OK:
                 raise_sqlite_error(self.conn.db, 'error finalizing query: ')
 
-            if zsql[0] == 0:
+            if tail[0] == 0:
                 break
 
         return self
@@ -996,7 +1000,6 @@ cdef class Connection(_callable_context_manager):
 
         if callback is not None:
             Py_INCREF(callback)
-            callback.rowtype = None
             callback.conn = self
             userdata = <void *>callback
 
@@ -1008,7 +1011,6 @@ cdef class Connection(_callable_context_manager):
             raise
         finally:
             if callback is not None:
-                del callback.rowtype
                 del callback.conn
                 Py_DECREF(callback)
 
@@ -1246,8 +1248,10 @@ cdef class Connection(_callable_context_manager):
                        src_name=None):
         cdef Connection dest = Connection(filename)
         dest.connect()
-        self.backup(dest, pages, name, progress, src_name)
-        dest.close()
+        try:
+            self.backup(dest, pages, name, progress, src_name)
+        finally:
+            dest.close()
 
     def blob_open(self, table, column, rowid, read_only=False, database=None):
         check_connection(self)
@@ -1545,7 +1549,7 @@ cdef class Connection(_callable_context_manager):
         if sqlite3_wal_autocheckpoint(self.db, n) != SQLITE_OK:
             raise_sqlite_error(self.db, 'error setting wal autocheckpoint: ')
 
-    def checkpoint(self, full=False, truncate=False, name=None):
+    def checkpoint(self, full=False, truncate=False, restart=False, name=None):
         check_connection(self)
         cdef:
             bytes bname
@@ -1554,12 +1558,15 @@ cdef class Connection(_callable_context_manager):
             int pnLog, pnCkpt  # Size of WAL in frames, total num checkpointed.
             int rc
 
-        if full and truncate:
-            raise ValueError('full and truncate are mutually exclusive.')
+        if full + truncate + restart > 1:
+            raise ValueError('full, truncate and restart are mutually '
+                             'exclusive.')
         elif full:
             mode = SQLITE_CHECKPOINT_FULL
         elif truncate:
             mode = SQLITE_CHECKPOINT_TRUNCATE
+        elif restart:
+            mode = SQLITE_CHECKPOINT_RESTART
 
         if name:
             bname = encode(name)
@@ -1985,17 +1992,19 @@ cdef class Transaction(_callable_context_manager):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         is_bottom = self.conn._transaction_depth == 1
-        self.conn._transaction_depth -= 1
 
-        if exc_type:
-            # If there are still more transactions on the stack, then we
-            # will begin a new transaction.
-            self.rollback(not is_bottom)
-        elif is_bottom and not sqlite3_get_autocommit(self.conn.db):
-            try:
-                self.commit(False)
-            except Exception:
-                self.rollback(False)
+        try:
+            if exc_type:
+                # If there are still more transactions on the stack, then we
+                # will begin a new transaction.
+                self.rollback(not is_bottom)
+            elif is_bottom and not sqlite3_get_autocommit(self.conn.db):
+                try:
+                    self.commit(False)
+                except Exception:
+                    self.rollback(False)
+        finally:
+            self.conn._transaction_depth -= 1
 
 
 cdef class Savepoint(_callable_context_manager):
@@ -2066,6 +2075,7 @@ cdef inline int _check_blob_closed(Blob blob) except -1:
 cdef class Blob(object):
     cdef:
         int offset
+        int flags
         Connection conn
         sqlite3_blob *blob
         object __weakref__
@@ -2076,7 +2086,6 @@ cdef class Blob(object):
             bytes btable = encode(table)
             bytes bcolumn = encode(column)
             bytes bdatabase = encode(database or 'main')
-            int flags = 0 if read_only else 1
             int rc
             sqlite3_blob *blob
 
@@ -2084,6 +2093,7 @@ cdef class Blob(object):
             raise OperationalError('cannot operate on closed database.')
 
         self.conn = conn
+        self.flags = 0 if read_only else 1
 
         rc = sqlite3_blob_open(
             self.conn.db,
@@ -2091,7 +2101,7 @@ cdef class Blob(object):
             <const char *>btable,
             <const char *>bcolumn,
             <sqlite3_int64>rowid,
-            flags,
+            self.flags,
             &blob)
 
         if rc != SQLITE_OK:
@@ -2264,7 +2274,7 @@ ctypedef struct cysqlite_cursor:
 cdef void set_vtab_error(sqlite3_vtab *pVtab, const char *msg) noexcept:
     if pVtab.zErrMsg:
         sqlite3_free(pVtab.zErrMsg)
-    pVtab.zErrMsg = sqlite3_mprintf("%s", msg)
+    pVtab.zErrMsg = sqlite3_mprintf('%s', msg)
 
 
 # We define an xConnect function, but leave xCreate NULL so that the
@@ -2276,6 +2286,7 @@ cdef int cyConnect(sqlite3 *db, void *pAux, int argc, const char *const*argv,
         object table_func_cls
         cysqlite_vtab *pNew = <cysqlite_vtab *>0
         bytes schema
+        bytes err
 
     if pAux == NULL:
         pzErr[0] = sqlite3_mprintf('Missing table function class')
@@ -2286,7 +2297,8 @@ cdef int cyConnect(sqlite3 *db, void *pAux, int argc, const char *const*argv,
         schema = encode('CREATE TABLE x(%s);' %
                         table_func_cls.get_table_columns_declaration())
     except Exception as exc:
-        pzErr[0] = sqlite3_mprintf(encode('Failed to get schema: %s' % exc))
+        err = encode('Failed to get schema: %s' % exc)
+        pzErr[0] = sqlite3_mprintf('%s', err)
         return SQLITE_ERROR
 
     rc = sqlite3_declare_vtab(db, <const char *>schema)
@@ -3031,6 +3043,7 @@ def rank_lucene(py_match_info, *raw_weights):
         int nphrase, ncol
         double total_docs, term_frequency
         double doc_length, docs_with_term, avg_length
+        double tf, fieldNorms
         double idf, weight, rhs, denom
         double *weights
         int P_O = 0, C_O = 1, N_O = 2, L_O, X_O
@@ -3253,8 +3266,10 @@ cdef class median(object):
     def finalize(self):
         if self.ct == 0:
             return None
-        elif self.ct < 3:
+        elif self.ct == 1:
             return self.items[0]
+        elif self.ct == 2:
+            return (self.items[0] + self.items[1]) / 2.
         else:
             return self.selectKth(self.ct // 2)
     value = finalize
