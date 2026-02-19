@@ -311,8 +311,14 @@ class TestExecute(BaseTestCase):
         res = self.db.execute_scalar('select sum(v) from g')
         self.assertEqual(res, 6)
 
+        res = self.db.execute_scalar('select 1 where 1 = 0')
+        self.assertTrue(res is None)
+
         curs = self.db.execute('select sum(v) from g')
         self.assertEqual(curs.value(), 6)
+
+        curs = self.db.execute('select 1 where 1 = 0')
+        self.assertTrue(curs.value() is None)
 
         curs = self.db.execute('select * from g')
         curs.close()

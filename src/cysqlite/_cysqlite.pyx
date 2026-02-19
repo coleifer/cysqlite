@@ -978,13 +978,16 @@ cdef class Connection(_callable_context_manager):
         return cursor.executescript(sql)
 
     def execute_one(self, sql, params=None):
-        cdef Cursor c = self.execute(sql, params)
-        return c.fetchone()
+        check_connection(self)
+        cdef Cursor cursor = Cursor(self)
+        return cursor.execute(sql, params).fetchone()
 
     def execute_scalar(self, sql, params=None):
-        cdef Cursor c = self.execute(sql, params)
-        res = c.fetchone()
-        return res[0] if res else None
+        check_connection(self)
+        cdef Cursor cursor = Cursor(self)
+        res = cursor.execute(sql, params).fetchone()
+        if res is not None:
+            return res[0]
 
     def execute_simple(self, sql, callback=None):
         check_connection(self)
