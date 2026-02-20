@@ -340,7 +340,8 @@ class TestExecute(BaseTestCase):
         self.assertEqual(len(res), 100)
         self.assertEqual(res[0], ('k99',))
 
-        self.assertRaises(ValueError, lambda: curs.executemany('select 1'))
+        # No read queries.
+        self.assertRaises(OperationalError, curs.executemany, 'select 1', [()])
 
         # Read queries not allowed by executemany.
         sql = 'select * from k where id > ?'
@@ -411,7 +412,7 @@ class TestExecute(BaseTestCase):
             self.assertRaises(OperationalError, obj.execute, q, (1,))
             self.assertRaises(OperationalError, obj.execute, q, (1, 2, 3))
 
-            self.assertRaises(ValueError, obj.executemany, q, [])
+            self.assertRaises(OperationalError, obj.executemany, q, [()])
             self.assertRaises(OperationalError, obj.executemany, q, [(1,)])
             self.assertRaises(OperationalError, obj.executemany, q, [(1, 2, 3)])
 
@@ -426,7 +427,7 @@ class TestExecute(BaseTestCase):
             self.assertRaises(OperationalError, obj.execute, q,
                               {'x': 'k1', 'v': 'v1'})
 
-            self.assertRaises(ValueError, obj.executemany, q, [])
+            self.assertRaises(OperationalError, obj.executemany, q, [{}])
             self.assertRaises(OperationalError, obj.executemany, q,
                               [{'k': 'k1'}])
             self.assertRaises(OperationalError, obj.executemany, q,

@@ -580,7 +580,7 @@ cdef class Cursor(object):
 
     cpdef executemany(self, sql, seq_of_params=None):
         if not seq_of_params:
-            raise ValueError('Cannot call executemany() without parameters.')
+            return self
         elif self.conn.db == NULL:
             self.stmt = None
             self.executing = False
@@ -895,8 +895,12 @@ cdef class Connection(_callable_context_manager):
             rc = sqlite3_open_v2(zdatabase, &self.db, flags, zvfs)
 
         if rc != SQLITE_OK:
+            if self.db == NULL:
+                raise MemoryError
+            errmsg = decode(sqlite3_errmsg(self.db))
+            sqlite3_close_v2(self.db)
             self.db = NULL
-            raise OperationalError('error opening database: %s.' % rc)
+            raise OperationalError('error opening database: %s.' % errmsg)
 
         if self.extensions:
             rc = sqlite3_enable_load_extension(self.db, 1)
@@ -1002,9 +1006,8 @@ cdef class Connection(_callable_context_manager):
             void *userdata = NULL
 
         if callback is not None:
-            Py_INCREF(callback)
-            callback.conn = self
-            userdata = <void *>callback
+            Py_INCREF(ctx)
+            userdata = <void *>ctx
 
         try:
             rc = sqlite3_exec(self.db, bsql, _exec_callback, userdata, &errmsg)
@@ -1014,8 +1017,7 @@ cdef class Connection(_callable_context_manager):
             raise
         finally:
             if callback is not None:
-                del callback.conn
-                Py_DECREF(callback)
+                Py_DECREF(ctx)
 
     cdef _execute_internal(self, sql):
         # Internal helper for executing BEGIN/COMMIT/ROLLBACK to avoid
@@ -1250,7 +1252,6 @@ cdef class Connection(_callable_context_manager):
     def backup_to_file(self, filename, pages=None, name=None, progress=None,
                        src_name=None):
         cdef Connection dest = Connection(filename)
-        dest.connect()
         try:
             self.backup(dest, pages, name, progress, src_name)
         finally:
@@ -1281,8 +1282,9 @@ cdef class Connection(_callable_context_manager):
 
         rc = sqlite3_load_extension(self.db, bname, NULL, &errmsg)
         if rc != SQLITE_OK:
-            raise OperationalError('error loading extension: %s' %
-                                   decode(errmsg))
+            msg = decode(errmsg)
+            sqlite3_free(errmsg)
+            raise OperationalError('error loading extension: %s' % msg)
 
     def create_function(self, fn, name=None, nargs=-1, deterministic=True):
         check_connection(self)
@@ -1810,7 +1812,7 @@ cdef void _update_cb(void *data, int queryType, const char *database,
     # the database is updated (insert/update/delete queries). The Python
     # callback receives a string indicating the query type, the name of the
     # database, the name of the table being updated, and the rowid of the row
-    # being updatd.
+    # being updated.
     cdef _Callback cb = <_Callback>data
     if queryType == SQLITE_INSERT:
         query = 'INSERT'
@@ -1822,7 +1824,7 @@ cdef void _update_cb(void *data, int queryType, const char *database,
         query = ''
 
     try:
-        cb.fn(query, decode(database), decode(table), <int>rowid)
+        cb.fn(query, decode(database), decode(table), <long long>rowid)
     except Exception as exc:
         cb.conn._callback_error = exc
         if cb.conn.print_callback_tracebacks:
@@ -1953,14 +1955,14 @@ cdef int _exec_callback(void *data, int argc, char **argv, char **colnames) noex
         # If no callback given, just return.
         return SQLITE_OK
 
-    callback = <object>data
+    callback, conn = <tuple>data
     row = tuple([decode(argv[i]) if argv[i] != NULL else None
                  for i in range(argc)])
     try:
         callback(row)
     except Exception as exc:
-        callback.conn._callback_error = exc
-        if callback.conn.print_callback_tracebacks:
+        conn._callback_error = exc
+        if conn.print_callback_tracebacks:
             traceback.print_exc()
         return SQLITE_ERROR
 
@@ -2136,10 +2138,10 @@ cdef class Blob(object):
 
     def reopen(self, rowid):
         _check_blob(self)
-        self.offset = 0
         if sqlite3_blob_reopen(self.blob, <sqlite3_int64>rowid):
             self._close()
             raise_sqlite_error(self.conn.db, 'unable to reopen blob: ')
+        self.offset = 0
 
     def __enter__(self):
         _check_blob(self)
@@ -2730,7 +2732,7 @@ cdef int cyFilter(sqlite3_vtab_cursor *pBase, int idxNum,
 
     if (idxStr == NULL or argc == 0) and len(table_func.params):
         return SQLITE_ERROR
-    elif len(idxStr):
+    elif idxStr != NULL and len(idxStr):
         params = decode(idxStr).split(',')
     else:
         params = []
@@ -3212,7 +3214,7 @@ cdef python_to_sqlite(sqlite3_context *context, param):
         if PyObject_GetBuffer(param, &view, PyBUF_CONTIG_RO):
             sqlite3_result_error(
                 context,
-                encode('Count not get readable buffer.'),
+                encode('Could not get readable buffer.'),
                 -1)
             return SQLITE_ERROR
         sqlite3_result_blob64(context, view.buf,
@@ -3253,6 +3255,9 @@ cdef double *get_weights(int ncol, tuple raw_weights):
         int icol
         double *weights = <double *>PyMem_Malloc(sizeof(double) * ncol)
 
+    if weights == NULL:
+        return NULL
+
     for icol in range(ncol):
         if argc == 0:
             weights[icol] = 1.0
@@ -3292,6 +3297,8 @@ def rank_lucene(py_match_info, *raw_weights):
     L_O = 3 + ncol
     X_O = L_O + ncol
     weights = get_weights(ncol, raw_weights)
+    if weights == NULL:
+        raise MemoryError
 
     for iphrase in range(nphrase):
         for icol in range(ncol):
@@ -3351,6 +3358,8 @@ def rank_bm25(py_match_info, *raw_weights):
     L_O = A_O + ncol
     X_O = L_O + ncol
     weights = get_weights(ncol, raw_weights)
+    if weights == NULL:
+        raise MemoryError
 
     for iphrase in range(nphrase):
         for icol in range(ncol):
