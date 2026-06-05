@@ -1,4 +1,4 @@
-# cython: language_level=3
+# cython: language_level=3, freethreading_compatible = True
 import cython
 from cpython.bytes cimport PyBytes_AS_STRING
 from cpython.bytes cimport PyBytes_AsString

@@ -1,4 +1,4 @@
-# cython: language_level=3
+# cython: language_level=3, freethreading=True
 from cpython.buffer cimport PyBUF_SIMPLE
 from cpython.buffer cimport PyObject_CheckBuffer
 from cpython.buffer cimport PyObject_GetBuffer
