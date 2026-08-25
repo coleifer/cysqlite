@@ -1422,12 +1422,16 @@ cdef class Connection(_callable_context_manager):
 
     def serialize(self, name='main'):
         check_connection(self)
+        if not HAS_DESERIALIZE:
+            raise NotSupportedError(
+                'this build of SQLite does not support serialize() '
+                '(requires SQLite 3.36.0 or newer)')
         cdef:
             bytes bname = encode(name)
             sqlite3_int64 size = 0
             unsigned char *data
 
-        data = sqlite3_serialize(self.db, PyBytes_AsString(bname), &size, 0)
+        data = cysqlite_serialize(self.db, PyBytes_AsString(bname), &size, 0)
         if data == NULL:
             if size == 0:
                 return b''  # Empty database.
@@ -1439,6 +1443,10 @@ cdef class Connection(_callable_context_manager):
 
     def deserialize(self, data, name='main'):
         check_connection(self)
+        if not HAS_DESERIALIZE:
+            raise NotSupportedError(
+                'this build of SQLite does not support deserialize() '
+                '(requires SQLite 3.36.0 or newer)')
         cdef:
             bytes bname = encode(name)
             Py_buffer view
@@ -1461,10 +1469,10 @@ cdef class Connection(_callable_context_manager):
         finally:
             PyBuffer_Release(&view)
 
-        rc = sqlite3_deserialize(self.db, PyBytes_AsString(bname),
-                                 buf, sz, sz,
-                                 SQLITE_DESERIALIZE_FREEONCLOSE |
-                                 SQLITE_DESERIALIZE_RESIZEABLE)
+        rc = cysqlite_deserialize(self.db, PyBytes_AsString(bname),
+                                  buf, sz, sz,
+                                  SQLITE_DESERIALIZE_FREEONCLOSE |
+                                  SQLITE_DESERIALIZE_RESIZEABLE)
         if rc != SQLITE_OK:
             raise_sqlite_error(self, 'error deserializing: ')
 
@@ -3603,6 +3611,7 @@ def compile_option(opt):
 
 HAS_COLUMN_METADATA = compile_option('enable_column_metadata')
 HAS_LOAD_EXTENSION = bool(CYSQLITE_HAVE_LOAD_EXTENSION)
+HAS_DESERIALIZE = bool(CYSQLITE_HAVE_DESERIALIZE)
 #HAS_PREUPDATE_HOOK = compile_option('enable_preupdate_hook')
 #HAS_STMT_SCANSTATUS = compile_option('enable_stmt_scanstatus')
 

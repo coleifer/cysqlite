@@ -1131,6 +1131,7 @@ Connection
       :return: serialized database image.
       :rtype: bytes
       :raises: :class:`MemoryError` if SQLite cannot allocate the buffer.
+      :raises: :class:`NotSupportedError` if SQLite is older than 3.36.0.
 
       The returned bytes are identical to what SQLite would write to disk
       for the same database, and are suitable for passing to
@@ -1175,6 +1176,7 @@ Connection
       :raises: :class:`ValueError` if ``data`` is empty.
       :raises: :class:`MemoryError` if SQLite cannot allocate the backing
          buffer.
+      :raises: :class:`NotSupportedError` if SQLite is older than 3.36.0.
 
       The connection cannot have an active transaction when ``deserialize()``
       is called. If ``in_transaction`` is true, the call raises

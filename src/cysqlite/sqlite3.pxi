@@ -657,8 +657,6 @@ cdef extern from "sqlite3.h" nogil:
     cdef int sqlite3_preupdate_depth(sqlite3 *)
     cdef int sqlite3_preupdate_new(sqlite3 *, int, sqlite3_value **)
     cdef int sqlite3_system_errno(sqlite3*)
-    cdef unsigned char *sqlite3_serialize(sqlite3 *db, const char *zSchema, sqlite3_int64 *piSize, unsigned int mFlags)
-    cdef int sqlite3_deserialize(sqlite3 *db, const char *zSchema, unsigned char *pData, sqlite3_int64 szDb, sqlite3_int64 szBuf, unsigned mFlags)
 
 
 cdef int SQLITE_JSON_TYPE = 74  # ASCII 'J', from sqlite/ext/misc/json.c.
@@ -703,3 +701,41 @@ cdef extern from *:
     int CYSQLITE_HAVE_LOAD_EXTENSION
     int cysqlite_load_extension(sqlite3 *db, const char *zFile, const char *zProc, char **pzErrMsg)
     int cysqlite_enable_load_extension(sqlite3 *db, int onoff)
+
+
+# Serialize/deserialize shim.
+cdef extern from *:
+    """
+    #include "sqlite3.h"
+
+    #ifndef CYSQLITE_HAVE_DESERIALIZE
+    #define CYSQLITE_HAVE_DESERIALIZE (SQLITE_VERSION_NUMBER >= 3036000)
+    #endif
+
+    static unsigned char *cysqlite_serialize(sqlite3 *db, const char *zSchema,
+                                             sqlite3_int64 *piSize,
+                                             unsigned int mFlags) {
+    #if CYSQLITE_HAVE_DESERIALIZE
+        return sqlite3_serialize(db, zSchema, piSize, mFlags);
+    #else
+        (void)db; (void)zSchema; (void)mFlags;
+        if (piSize) { *piSize = 0; }
+        return NULL;
+    #endif
+    }
+
+    static int cysqlite_deserialize(sqlite3 *db, const char *zSchema,
+                                    unsigned char *pData, sqlite3_int64 szDb,
+                                    sqlite3_int64 szBuf, unsigned mFlags) {
+    #if CYSQLITE_HAVE_DESERIALIZE
+        return sqlite3_deserialize(db, zSchema, pData, szDb, szBuf, mFlags);
+    #else
+        (void)db; (void)zSchema; (void)pData; (void)szDb; (void)szBuf;
+        (void)mFlags;
+        return SQLITE_ERROR;
+    #endif
+    }
+    """
+    int CYSQLITE_HAVE_DESERIALIZE
+    unsigned char *cysqlite_serialize(sqlite3 *db, const char *zSchema, sqlite3_int64 *piSize, unsigned int mFlags)
+    int cysqlite_deserialize(sqlite3 *db, const char *zSchema, unsigned char *pData, sqlite3_int64 szDb, sqlite3_int64 szBuf, unsigned mFlags)

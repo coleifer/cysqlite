@@ -18,7 +18,7 @@ from decimal import Decimal
 from fractions import Fraction
 
 from cysqlite import *
-from cysqlite._cysqlite import Cursor, HAS_LOAD_EXTENSION
+from cysqlite._cysqlite import Cursor, HAS_DESERIALIZE, HAS_LOAD_EXTENSION
 from cysqlite.metadata import Column, ForeignKey, Index
 
 
@@ -3094,6 +3094,10 @@ class TestBackup(BaseTestCase):
 
         self.assertIn('fail', str(ctx.exception))
 
+
+@unittest.skipUnless(HAS_DESERIALIZE,
+                     'SQLite built without serialize support')
+class TestSerialize(BaseTestCase):
     def test_serialize_deserialize(self):
         with Connection(':memory:') as conn:
             data = conn.serialize()

@@ -38,6 +38,7 @@ sqlite_version: str
 sqlite_version_info: tuple[int, int, int]
 threadsafety: int
 HAS_COLUMN_METADATA: bool
+HAS_DESERIALIZE: bool
 
 # ---------------------------------------------------------------------------
 # Type aliases
