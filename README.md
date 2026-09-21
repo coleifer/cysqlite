@@ -25,7 +25,7 @@ cysqlite supports standalone builds or dynamic-linking with the system SQLite.
 
 ### Performance
 
-![](https://media.charlesleifer.com/blog/photos/cysqlite-bench.png)
+![](https://media.charlesleifer.com/blog/photos/cysqlite-bench-0.png)
 
 ### Installing
 
