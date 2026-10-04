@@ -568,6 +568,7 @@ cdef class Statement(object):
 
 
 @cython.final
+@cython.no_gc_clear  # dealloc releases stmt.
 cdef class Cursor(object):
     cdef:
         readonly Connection conn

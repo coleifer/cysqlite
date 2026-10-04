@@ -3343,6 +3343,17 @@ class TestStatementUsage(BaseTestCase):
         self.assertRaises(OperationalError, lambda: next(curs))
         self.assertEqual(list(curs.execute('select 1')), [(1,)])
 
+    def test_cursor_collected_in_cycle(self):
+        self.db.execute('create table g (k)')
+        self.db.executemany('insert into g (k) values (?)', [(1,), (2,)])
+        curs = self.db.execute('select k from g')
+        next(curs)
+        cycle = [curs]
+        cycle.append(cycle)
+        del curs, cycle
+        gc.collect()
+        self.assertEqual(self.db.get_stmt_usage(), (3, 0))
+
     def test_statement_too_much(self):
         with self.assertRaises(ProgrammingError):
             curs = self.db.execute('select 1; -- test')
