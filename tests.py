@@ -1869,6 +1869,17 @@ class TestTransactions(BaseTestCase):
         save(1)
         self.assertRegister([1])
 
+    def test_atomic_decorator_recursive(self):
+        @self.db.atomic()
+        def save(i):
+            self._save(i)
+            if i > 1:
+                save(i - 1)
+
+        save(3)
+        self.assertRegister([1, 2, 3])
+        self.assertFalse(self.db.in_transaction)
+
     def test_atomic_exception(self):
         def will_fail():
             with self.db.atomic():

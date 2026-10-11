@@ -2397,23 +2397,30 @@ cdef class Atomic(_callable_context_manager):
     cdef:
         Connection conn
         str lock
-        readonly object txn
+        list txns  # One per active block, a decorated fn may recurse.
 
     def __init__(self, Connection conn, lock=None):
         self.conn = conn
         self.lock = lock
+        self.txns = []
 
     def __enter__(self):
         # Use a savepoint when any transaction is already open -- including
         # one started manually via begin() -- otherwise BEGIN would fail.
         if self.conn._transaction_depth == 0 and not self.conn.in_transaction:
-            self.txn = self.conn.transaction(self.lock)
+            txn = self.conn.transaction(self.lock)
         else:
-            self.txn = self.conn.savepoint()
-        return self.txn.__enter__()
+            txn = self.conn.savepoint()
+        txn.__enter__()
+        self.txns.append(txn)
+        return txn
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        return self.txn.__exit__(exc_type, exc_val, exc_tb)
+        return self.txns.pop().__exit__(exc_type, exc_val, exc_tb)
+
+    @property
+    def txn(self):
+        return self.txns[-1] if self.txns else None
 
     def commit(self, begin=True):
         self.txn.commit(begin)
