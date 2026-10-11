@@ -813,9 +813,12 @@ cdef class Cursor(object):
         return data
 
     cdef finish(self):
+        # Closing the connection finalizes the stmt, so there is nothing to
+        # reset or release.
         if self.stmt is not None:
-            self.stmt.reset()
-            self.conn.stmt_release(self.stmt)
+            if self.stmt.st != NULL:
+                self.stmt.reset()
+                self.conn.stmt_release(self.stmt)
             self.stmt = None
 
         self.executing = False

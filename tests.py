@@ -3343,6 +3343,20 @@ class TestStatementUsage(BaseTestCase):
         self.assertRaises(OperationalError, lambda: next(curs))
         self.assertEqual(list(curs.execute('select 1')), [(1,)])
 
+    def test_unfinished_cursor_after_close(self):
+        # Closing the connection finalizes the stmts of unfinished cursors.
+        sql = 'select 1 union all select 2'
+        c1, c2, c3, c4 = [self.db.execute(sql) for _ in range(4)]
+        self.db.close()
+
+        c1.close()
+        with c2:
+            pass
+        self.assertRaises(OperationalError, c3.scalar)
+
+        self.db.connect()
+        self.assertEqual(list(c4.execute('select 3')), [(3,)])
+
     def test_cursor_collected_in_cycle(self):
         self.db.execute('create table g (k)')
         self.db.executemany('insert into g (k) values (?)', [(1,), (2,)])
