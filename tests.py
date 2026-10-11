@@ -5078,6 +5078,40 @@ class TestAIOConnection(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await asyncio.wait_for(db.close(), timeout=2.0))
         self.assertFalse(db._thread.is_alive())
 
+    async def test_use_after_close(self):
+        db = aconnect(':memory:')
+        curs = await db.execute('select 1 union all select 2')
+        await db.close()
+
+        # The worker is gone, so these must raise rather than wait forever.
+        with self.assertRaises(OperationalError):
+            await asyncio.wait_for(db.execute('select 1'), timeout=2.0)
+        with self.assertRaises(OperationalError):
+            await asyncio.wait_for(curs.fetchall(), timeout=2.0)
+
+    async def test_cancel_queued_query(self):
+        # Cancelling a queued query must not interrupt the one running.
+        started, release = threading.Event(), threading.Event()
+        def block(x):
+            started.set()
+            release.wait()
+            return x
+        self.db.conn.create_function(block, 'block', 1)
+
+        sql = ('with recursive c(x) as (select 1 union all select x + 1 '
+               'from c where x < 100) select sum(block(x)) from c')
+        running = asyncio.create_task(self.db.execute_scalar(sql))
+        await asyncio.get_running_loop().run_in_executor(None, started.wait)
+
+        queued = asyncio.create_task(self.db.execute_scalar('select 1'))
+        await asyncio.sleep(0)
+        queued.cancel()
+        release.set()
+
+        self.assertEqual(await running, 5050)
+        with self.assertRaises(asyncio.CancelledError):
+            await queued
+
     async def test_execute(self):
         curs = await self.db.execute('select 1')
         self.assertEqual(await curs.fetchall(), [(1,)])

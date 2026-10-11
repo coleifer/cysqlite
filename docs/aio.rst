@@ -139,9 +139,9 @@ AsyncConnection
       :return: cursor wrapping the result set.
       :rtype: :class:`AsyncCursor`
 
-      If the awaiting coroutine is cancelled while the query is pending,
+      If the awaiting coroutine is cancelled while the query is running,
       :meth:`~Connection.interrupt` is called on the underlying
-      connection to abort the in-progress operation.
+      connection to abort it. A query still waiting in the queue is skipped.
 
       Example:
 
@@ -269,7 +269,7 @@ AsyncConnection
 
       :raises RuntimeError: if the background thread does not terminate.
 
-      After ``close()``, the connection cannot be used for further operations.
+      After ``close()``, further operations raise :class:`OperationalError`.
       Calling ``close()`` on an already-closed connection returns ``False``.
 
    .. property:: in_transaction

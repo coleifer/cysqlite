@@ -7,6 +7,7 @@ from cysqlite._cysqlite import connect as _connect
 from cysqlite._cysqlite import Connection
 from cysqlite._cysqlite import Row
 from cysqlite.exceptions import InterfaceError
+from cysqlite.exceptions import OperationalError
 from cysqlite.utils import _ConnectionContext
 from cysqlite.utils import Pool as _Pool
 
@@ -19,6 +20,9 @@ class AsyncConnection(object):
         self.conn = conn
         self.loop = loop
         self.queue = queue.SimpleQueue()
+        self._closed = False
+        self._lock = threading.Lock()
+        self._running = None  # Future of the job the worker is running.
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -45,18 +49,22 @@ class AsyncConnection(object):
             if item is SHUTDOWN:
                 break
             fn, fut = item
+            with self._lock:
+                self._running = fut
             try:
-                result = fn()
-            except BaseException as exc:
-                if fut is not None:
-                    self.loop.call_soon_threadsafe(self._resolve, fut, exc,
-                                                   None)
-            else:
-                if fut is not None:
-                    self.loop.call_soon_threadsafe(self._resolve, fut, None,
-                                                   result)
+                result, exc = fn(), None
+            except BaseException as e:
+                result, exc = None, e
+            # Cleared before resolving so a late cancel cannot interrupt the
+            # next job.
+            with self._lock:
+                self._running = None
+            if fut is not None:
+                self.loop.call_soon_threadsafe(self._resolve, fut, exc, result)
 
     def _submit(self, fn, *args, **kwargs):
+        if self._closed:
+            raise OperationalError('Cannot operate on closed database.')
         fut = self.loop.create_future()
         def wrap():
             if not fut.cancelled():
@@ -65,12 +73,16 @@ class AsyncConnection(object):
         return fut
 
     async def _submit_query(self, fn, *args, **kwargs):
-        # Like _submit, but interrupt the running query if cancelled.
+        # Like _submit, but interrupt the query if cancelled while it runs.
+        fut = self._submit(fn, *args, **kwargs)
         try:
-            return await self._submit(fn, *args, **kwargs)
+            return await fut
         except asyncio.CancelledError:
-            if not self.conn.is_closed():
-                self.conn.interrupt()
+            # A query still in the queue is skipped by the worker, and the
+            # running one may belong to another task.
+            with self._lock:
+                if self._running is fut and not self.conn.is_closed():
+                    self.conn.interrupt()
             raise
 
     async def execute(self, sql, params=None):
@@ -102,12 +114,13 @@ class AsyncConnection(object):
         await self._submit(self.conn.rollback)
 
     async def close(self):
-        if not self._thread.is_alive():
+        if self._closed:
             return False
 
         # If close fails (e.g. a transaction is open) leave the worker alive
         # so the caller can roll back and retry.
         await self._submit(self.conn.close)
+        self._closed = True
         self.queue.put(SHUTDOWN)
         await self.loop.run_in_executor(None, self._thread.join, 5.0)
         if self._thread.is_alive():
