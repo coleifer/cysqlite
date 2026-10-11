@@ -2895,6 +2895,25 @@ class TestDatabaseSettings(BaseTestCase):
         with self.assertRaises(ValueError):
             self.db.pragma('cache_size', permanent=True)
 
+    def test_pragma_permanent_failure(self):
+        # A failed pragma is not stored, so reconnecting still works.
+        with self.assertRaises(OperationalError):
+            self.db.pragma('cache_size', '1 x', permanent=True)
+        self.assertNotIn('cache_size', self.db.pragmas)
+        self.db.close()
+        self.assertTrue(self.db.connect())
+
+    def test_connect_failure_closes(self):
+        self.db.close()
+        self.db.pragmas['cache_size'] = '1 x'
+        with self.assertRaises(OperationalError):
+            self.db.connect()
+        self.assertTrue(self.db.is_closed())
+
+    def test_primary_key_order(self):
+        self.db.execute('create table pk (a, b, c, primary key (c, a))')
+        self.assertEqual(self.db.get_primary_keys('pk'), ['c', 'a'])
+
     def test_metadata_quoted_identifiers(self):
         self.db.execute('create table "we""ird" ("a" integer primary key, '
                         '"b ""x""" text)')

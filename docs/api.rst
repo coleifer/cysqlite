@@ -1007,7 +1007,8 @@ Connection
 
    .. method:: get_primary_keys(table, database=None)
 
-      Return a list of column names that comprise the table primary key.
+      Return a list of column names that comprise the table primary key, in
+      key order.
 
       :param str table: table name.
       :param str database: database name to query, *optional*.

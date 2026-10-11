@@ -1053,15 +1053,20 @@ cdef class Connection(_callable_context_manager):
             self.db = NULL
             raise OperationalError(f'error setting busy timeout: {errmsg}')
 
-        if self.pragmas:
-            for key, value in self.pragmas.items():
-                self.pragma(key, value)
+        try:
+            if self.pragmas:
+                for key, value in self.pragmas.items():
+                    self.pragma(key, value)
 
-        for (kind, fn, name, n, det) in list(self.registrations.values()):
-            if kind == 'tablefunc':
-                self._register_table_function(fn)
-            else:
-                self._register(kind, fn, name, n, det)
+            for (kind, fn, name, n, det) in list(self.registrations.values()):
+                if kind == 'tablefunc':
+                    self._register_table_function(fn)
+                else:
+                    self._register(kind, fn, name, n, det)
+        except Exception:
+            # Do not leave a half-initialized connection open.
+            self.close(force=True)
+            raise
 
         return True
 
@@ -1243,12 +1248,13 @@ cdef class Connection(_callable_context_manager):
         sql = f'PRAGMA {key}'
         if value is not SENTINEL:
             sql += ' = %s' % (value if value is not None else 0)
-            if permanent:
-                self.pragmas[key] = value
         elif permanent:
             raise ValueError('permanent pragmas require a value')
 
         curs = self.execute(sql)
+        if permanent:
+            # Stored only once it has succeeded, connect() replays it.
+            self.pragmas[key] = value
         if multi:
             # Return multiple rows, e.g. PRAGMA table_list.
             return curs
@@ -1317,7 +1323,8 @@ cdef class Connection(_callable_context_manager):
         stmt = self.execute(f'PRAGMA {database}.'
                             f'table_info({_quote_ident(table)})',
                             row_factory=None)
-        return [row[1] for row in filter(lambda r: r[-1], stmt)]
+        # The pk column is the 1-based position within the primary key.
+        return [name for _, name in sorted((r[5], r[1]) for r in stmt if r[5])]
 
     def get_foreign_keys(self, table, database=None):
         database = _quote_ident(database or 'main')
