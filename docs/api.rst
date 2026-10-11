@@ -447,7 +447,7 @@ Connection
           :meth:`Cursor.execute` versus calling :meth:`Connection.execute`,
           as the latter will create and return a :class:`Cursor`.
 
-   .. method:: execute(sql, params=None)
+   .. method:: execute(sql, params=None, row_factory=SENTINEL)
 
       Create a new :class:`Cursor` and call :meth:`~Cursor.execute` with the
       given *sql* and *params*.
@@ -455,6 +455,8 @@ Connection
       :param str sql: SQL query to execute.
       :param params: parameters for query (optional).
       :type params: tuple, list, sequence, dict, or ``None``.
+      :param row_factory: overrides :attr:`~Connection.row_factory` for this
+         cursor. ``None`` returns plain tuples.
       :return: cursor object.
       :rtype: :class:`Cursor`
 
@@ -479,6 +481,10 @@ Connection
          curs = db.execute('select * from kv where id = 0')
          assert curs.fetchone() is None
          assert curs.fetchall() == []
+
+         # Use a Row for this query only.
+         row = db.execute('select * from kv', row_factory=Row).fetchone()
+         print(row.key)
 
    .. method:: executemany(sql, seq_of_params)
 

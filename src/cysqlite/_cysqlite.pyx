@@ -1125,8 +1125,10 @@ cdef class Connection(_callable_context_manager):
         return Cursor(self)
 
     # The Cursor methods below check the connection is open, no need to here.
-    def execute(self, sql, params=None):
+    def execute(self, sql, params=None, row_factory=SENTINEL):
         cdef Cursor cursor = Cursor(self)
+        if row_factory is not SENTINEL:
+            cursor.row_factory = row_factory
         return cursor.execute(sql, params)
 
     def executemany(self, sql, seq_of_params):
@@ -1250,34 +1252,35 @@ cdef class Connection(_callable_context_manager):
         if multi:
             # Return multiple rows, e.g. PRAGMA table_list.
             return curs
-        else:
-            # Return a single value, if one was returned.
-            row = curs.fetchone()
-            return row[0] if row else None
+        # Return a single value, if one was returned.
+        return curs.scalar()
 
     def get_tables(self, database=None):
         database = _quote_ident(database or 'main')
-        stmt = self.execute(f'SELECT name FROM {database}.sqlite_master '
-                            'WHERE type=? ORDER BY name', ('table',))
+        sql = (f'SELECT name FROM {database}.sqlite_master WHERE type=? '
+               'ORDER BY name')
+        stmt = self.execute(sql, ('table',), row_factory=None)
         return [row for row, in stmt]
 
     def get_views(self, database=None):
         database = _quote_ident(database or 'main')
         sql = (f'SELECT name, sql FROM {database}.sqlite_master WHERE type=? '
                'ORDER BY name')
-        return [View(*row) for row in self.execute(sql, ('view',))]
+        stmt = self.execute(sql, ('view',), row_factory=None)
+        return [View(*row) for row in stmt]
 
     def get_indexes(self, table, database=None):
         database = _quote_ident(database or 'main')
         query = (f'SELECT name, sql FROM {database}.sqlite_master '
                  'WHERE tbl_name = ? AND type = ? ORDER BY name')
-        stmt = self.execute(query, (table, 'index'))
+        stmt = self.execute(query, (table, 'index'), row_factory=None)
         index_to_sql = dict(stmt)
 
         # Determine which indexes have a unique constraint.
         unique_indexes = set()
         stmt = self.execute(f'PRAGMA {database}.'
-                            f'index_list({_quote_ident(table)})')
+                            f'index_list({_quote_ident(table)})',
+                            row_factory=None)
         for row in stmt:
             name = row[1]
             is_unique = int(row[2]) == 1
@@ -1288,7 +1291,8 @@ cdef class Connection(_callable_context_manager):
         index_columns = {}
         for index_name in sorted(index_to_sql):
             stmt = self.execute(
-                f'PRAGMA {database}.index_info({_quote_ident(index_name)})')
+                f'PRAGMA {database}.index_info({_quote_ident(index_name)})',
+                row_factory=None)
             index_columns[index_name] = [row[2] for row in stmt]
 
         return [
@@ -1303,20 +1307,23 @@ cdef class Connection(_callable_context_manager):
     def get_columns(self, table, database=None):
         database = _quote_ident(database or 'main')
         stmt = self.execute(f'PRAGMA {database}.'
-                            f'table_info({_quote_ident(table)})')
+                            f'table_info({_quote_ident(table)})',
+                            row_factory=None)
         return [Column(r[1], r[2], not r[3], bool(r[5]), table, r[4])
                 for r in stmt]
 
     def get_primary_keys(self, table, database=None):
         database = _quote_ident(database or 'main')
         stmt = self.execute(f'PRAGMA {database}.'
-                            f'table_info({_quote_ident(table)})')
+                            f'table_info({_quote_ident(table)})',
+                            row_factory=None)
         return [row[1] for row in filter(lambda r: r[-1], stmt)]
 
     def get_foreign_keys(self, table, database=None):
         database = _quote_ident(database or 'main')
         stmt = self.execute(f'PRAGMA {database}.'
-                            f'foreign_key_list({_quote_ident(table)})')
+                            f'foreign_key_list({_quote_ident(table)})',
+                            row_factory=None)
         return [ForeignKey(row[3], row[2], row[4], table) for row in stmt]
 
     def table_column_metadata(self, table, column, database=None):
@@ -1798,7 +1805,8 @@ cdef class Connection(_callable_context_manager):
     def database_list(self):
         check_connection(self)
         return [(row[1], row[2])
-                for row in self.execute('pragma database_list')]
+                for row in self.execute('pragma database_list',
+                                        row_factory=None)]
 
     def set_main_db_name(self, name):
         check_connection(self)

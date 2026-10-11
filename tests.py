@@ -1580,6 +1580,35 @@ class TestRowFactory(BaseTestCase):
         self.assertTrue(isinstance(curs2.fetchone(), tuple))
         self.assertTrue(isinstance(curs3.fetchone(), Row))
 
+    def test_execute_row_factory(self):
+        self.db.row_factory = Row
+        sql = 'select key from kv order by key limit 1'
+        self.assertEqual(self.db.execute(sql, row_factory=None).fetchone(),
+                         ('k1',))
+        self.assertEqual(
+            self.db.execute(sql, row_factory=dict_factory).fetchone(),
+            {'key': 'k1'})
+        self.assertIsInstance(self.db.execute(sql).fetchone(), Row)
+
+    def test_factory_not_used_internally(self):
+        # Introspection and pragma() read rows by position.
+        self.db.row_factory = dict_factory
+        self.db.execute('create index kv_key on kv (key)')
+        self.assertEqual(self.db.get_tables(), ['kv'])
+        self.assertEqual([c.name for c in self.db.get_columns('kv')],
+                         ['id', 'key', 'value', 'extra'])
+        self.assertEqual(self.db.get_primary_keys('kv'), ['id'])
+        self.assertEqual([i.name for i in self.db.get_indexes('kv')],
+                         ['kv_key'])
+        self.assertEqual(self.db.database_list(), [('main', '')])
+        self.assertEqual(self.db.pragma('user_version'), 0)
+
+        # Pragmas are replayed by connect().
+        conn = Connection(':memory:', row_factory=dict_factory,
+                          journal_mode='off')
+        self.assertEqual(conn.pragma('journal_mode'), 'off')
+        conn.close()
+
     def test_row_failure(self):
         i = 0
         def error_factory(cursor, row):
