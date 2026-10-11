@@ -1137,6 +1137,7 @@ Connection
       :param str name: database name to serialize. Defaults to ``'main'``.
       :return: serialized database image.
       :rtype: bytes
+      :raises: :class:`OperationalError` if there is no database *name*.
       :raises: :class:`MemoryError` if SQLite cannot allocate the buffer.
       :raises: :class:`NotSupportedError` if SQLite is older than 3.36.0.
 

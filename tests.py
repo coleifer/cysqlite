@@ -3182,6 +3182,10 @@ class TestSerialize(BaseTestCase):
         with Connection(':memory:') as conn:
             self.assertRaises(ValueError, conn.deserialize, b'')
 
+    def test_serialize_unknown_schema(self):
+        with Connection(':memory:') as conn:
+            self.assertRaises(OperationalError, conn.serialize, 'nonexistent')
+
     def test_deserialize_in_transaction(self):
         conn = Connection(':memory:')
         conn.execute('create table t (x)')

@@ -1453,6 +1453,9 @@ cdef class Connection(_callable_context_manager):
         if data == NULL:
             if size == 0:
                 return b''  # Empty database.
+            elif size < 0:
+                # Size is -1 when the schema does not exist.
+                raise OperationalError(f'unable to serialize "{name}"')
             raise MemoryError('sqlite3_serialize failed')
         try:
             return PyBytes_FromStringAndSize(<char *>data, size)
