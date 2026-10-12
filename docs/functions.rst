@@ -5,19 +5,18 @@ User-defined functions and hooks
 
 cysqlite lets you extend SQLite using ordinary Python callables: scalar
 functions, aggregates, window functions, table-valued functions and collations.
-It also exposes a set of connection hooks for observing or vetoing activity.
-Everything below is registered on a :class:`Connection`. The SQL functions and
-collations are automatically re-registered if the connection is closed and
-re-opened.
+It also exposes a set of connection hooks for introspection. Everything below
+is registered on a :class:`Connection`, and functions and collations are
+automatically re-registered if the connection is closed and re-opened.
 
 See the :class:`Connection` methods in the :doc:`api` reference for details.
 
 Scalar functions
 ----------------
 
-A scalar function maps its arguments to a single value. Register any callable
-that returns a value SQLite understands with
-:meth:`Connection.create_function`:
+A scalar function maps its arguments to a single value.
+
+Use :meth:`Connection.create_function`:
 
 .. code-block:: python
 
@@ -32,8 +31,9 @@ Aggregate functions
 -------------------
 
 An aggregate is a class with a ``step()`` method (called once per row) and a
-``finalize()`` method (returns the result). Register it with
-:meth:`Connection.create_aggregate`:
+``finalize()`` method (returns the result).
+
+Use :meth:`Connection.create_aggregate`:
 
 .. code-block:: python
 
@@ -55,8 +55,9 @@ Window functions
 ----------------
 
 A window function is an aggregate that additionally implements ``inverse()``
-(remove a row from the window) and ``value()`` (the current running value). See
-:meth:`Connection.create_window_function`:
+(remove a row from the window) and ``value()`` (the current running value).
+
+Use :meth:`Connection.create_window_function`:
 
 .. code-block:: python
 
@@ -83,8 +84,9 @@ Table-valued functions
 
 Expose a generator (or any function returning an iterable of rows) as a table.
 Each signature parameter becomes a function argument and parameters with a default
-are optional. The :meth:`Connection.table_function` decorator registers the
-function and returns it unchanged:
+are optional.
+
+Use :meth:`Connection.table_function`:
 
 .. code-block:: python
 
@@ -97,16 +99,17 @@ function and returns it unchanged:
 
    db.execute('select value from series(0, 10, 2)')  # 0, 2, 4, 6, 8
 
-The imperative :meth:`Connection.create_table_function` is equivalent. For
-writable tables, ``with_rowid``, or full control over the per-query lifecycle,
-subclass :class:`TableFunction` directly.
+You can also use :meth:`Connection.create_table_function`. For writable tables,
+``with_rowid``, or full control over the per-query lifecycle, subclass
+:class:`TableFunction` directly.
 
 Collations
 ----------
 
 A collation is a function of two strings returning a negative number, zero, or
-a positive number, used by ``ORDER BY ... COLLATE`` and similar. Register it
-with :meth:`Connection.create_collation`:
+a positive number, used by ``ORDER BY ... COLLATE`` and similar.
+
+Use :meth:`Connection.create_collation`:
 
 .. code-block:: python
 
@@ -119,10 +122,9 @@ with :meth:`Connection.create_collation`:
 Connection hooks
 ----------------
 
-Hooks observe (and in some cases veto) what happens on a connection. Unlike the
-functions above, a hook is cleared by passing ``None``.
+Hooks allow introspecting what happens on a connection.
 
-Commit and rollback hooks fire around transaction boundaries. Returning a
+Commit and rollback hooks fire at transaction boundaries. Returning a
 truthy value from the commit hook (or raising) turns the ``COMMIT`` into a
 ``ROLLBACK``:
 
@@ -130,10 +132,10 @@ truthy value from the commit hook (or raising) turns the ``COMMIT`` into a
 
    readonly = True
 
-   db.commit_hook(lambda: readonly)        # truthy return aborts the commit
+   db.commit_hook(lambda: readonly)  # truthy return aborts the commit
    db.rollback_hook(lambda: log.info('rolled back'))
 
-   db.commit_hook(None)                    # clear the hook
+   db.commit_hook(None)              # clear the hook
 
 The update hook fires after every INSERT, UPDATE or DELETE:
 
@@ -151,6 +153,7 @@ silently ignore individual operations:
 
    def authorizer(op, p1, p2, p3, p4):
        if op == SQLITE_UPDATE and p1 == 'log':
+           # Do not allow updates to the `log` table.
            return SQLITE_DENY
        return SQLITE_OK
 

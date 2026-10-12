@@ -5,11 +5,10 @@ Installation
 
 cysqlite can be installed four ways. Pick the one that fits:
 
-* Binary wheel, SQLite embedded, no build needed: ``pip install cysqlite``.
+* Binary wheel with SQLite embedded: ``pip install cysqlite``.
 * Source build against the system SQLite:
   ``pip install --no-binary :all: cysqlite``.
-* Self-contained build embedding a SQLite of your choosing, see
-  :ref:`custom-builds`.
+* Self-contained build embedding SQLite, see :ref:`custom-builds`.
 * Encrypted builds, see :ref:`sqlcipher-build` or :ref:`sqlite3mc-build`.
 
 Wheels
@@ -19,10 +18,8 @@ Wheels
 
     pip install cysqlite
 
-Wheels embed the SQLite release current at the time the cysqlite release was
-made, compiled with full-text search, JSON, r*tree, stat4, math functions,
-soundex, update/delete limit, and extension support. Check any build with
-:func:`compile_option`:
+Wheels embed the SQLite release current at the time of the cysqlite release,
+compiled with most features enabled. Check any build with :func:`compile_option`:
 
 .. code-block:: python
 
@@ -37,7 +34,7 @@ Building from source
 
 Source builds need a C compiler and the Python development headers. Building
 against the system SQLite additionally needs the SQLite development headers
-(``libsqlite3-dev`` on Debian, ``sqlite-devel`` on Fedora):
+(``libsqlite3-dev`` on Debian):
 
 .. code-block:: shell
 
@@ -56,11 +53,9 @@ To install the very latest commit:
 Custom Builds
 -------------
 
-When a ``sqlite3.c`` / ``sqlite3.h`` pair is present in the root of the
-cysqlite checkout, it is compiled into the extension and the result is fully
-self-contained. The ``fetch_sqlite`` script downloads an amalgamation into
-place, either the current release or any `release <https://www.sqlite.org/chronology.html>`_
-you name:
+When ``sqlite3.c`` and ``sqlite3.h`` are present in the root of the cysqlite
+checkout, they are compiled into the extension and the result is a fully
+self-contained module. Use ``fetch_sqlite`` to download an amalgamation:
 
 .. code-block:: shell
 
@@ -72,8 +67,7 @@ you name:
 
     pip install .
 
-The build prints the mode it resolved, e.g. ``cysqlite: building with
-bundled sqlite3.c``. Verify the result:
+Verify the result:
 
 .. code-block:: python
 
@@ -81,15 +75,11 @@ bundled sqlite3.c``. Verify the result:
     >>> cysqlite.sqlite_version
     '3.51.2'
 
-When switching between build flavors, remove the ``build/`` directory first
-so no stale objects are reused.
-
 Self-contained sdist
 --------------------
 
-A source distribution built from a checkout containing an amalgamation
-includes it, and installing that sdist produces a self-contained build. This
-is useful for distributing a pinned cysqlite+SQLite internally:
+You can also build a self-contained sdist from a checkout containing the sqlite
+source amalgamation:
 
 .. code-block:: shell
 
@@ -116,10 +106,7 @@ development headers (``libssl-dev`` on Debian):
 
     pip install .
 
-SQLCipher sources are detected automatically and the build announces
-``cysqlite: building with bundled sqlite3.c (sqlcipher)``. Set
-``SQLCIPHER=0`` to compile the same sources with the codec disabled.
-Verify:
+SQLCipher sources are detected automatically. Verify:
 
 .. code-block:: python
 
@@ -134,8 +121,7 @@ SQLite Multiple Ciphers
 
 `SQLite3 Multiple Ciphers <https://utelle.github.io/SQLite3MultipleCiphers/>`_
 also provides encryption, with no external crypto dependency. The
-``fetch_sqlite3mc`` script downloads a release amalgamation and renames it
-into place:
+``fetch_sqlite3mc`` script downloads a release amalgamation:
 
 .. code-block:: shell
 
@@ -156,8 +142,7 @@ Or do the same by hand with a zip from the
     mv sqlite3mc_amalgamation.c cysqlite/sqlite3.c
     mv sqlite3mc_amalgamation.h cysqlite/sqlite3.h
 
-The build announces ``cysqlite: building with bundled sqlite3.c
-(sqlite3mc)``. Verify:
+Verify:
 
 .. code-block:: python
 

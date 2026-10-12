@@ -77,15 +77,15 @@ level and a savepoint when nested - no manual ``SAVEPOINT`` needed.
                raise
      - .. code-block:: python
 
-           with db.atomic():       # nests freely
+           with db.atomic():  # supports nesting.
                with db.atomic():
                    ...
 
 Row factories
 -------------
 
-cysqlite's ``Row`` adds attribute access and ``.as_dict()`` on top of
-the stdlib's index/name/keys interface. Note that name lookup is
+cysqlite's ``Row`` factory provides attribute access and ``.as_dict()`` on top
+of the stdlib's index/name/keys interface. Note that name lookup is
 case-sensitive in cysqlite, case-insensitive in stdlib.
 
 .. list-table::
@@ -166,10 +166,9 @@ not. Wrap explicitly if you want script-as-atomic-unit.
 Error handling
 --------------
 
-cysqlite splits ``IntegrityError`` and ``OperationalError`` along the
-extended error code, so you can catch the specific constraint kind
-that fired (e.g. duplicate ``PRIMARY KEY`` raises
-``PrimaryKeyIntegrityError``, not ``UniqueIntegrityError``).
+cysqlite splits ``IntegrityError`` and ``OperationalError`` based on the
+extended error code, so you can catch the specific error (e.g. duplicate
+``PRIMARY KEY`` raises ``PrimaryKeyIntegrityError``):
 
 .. list-table::
    :header-rows: 1
@@ -265,31 +264,14 @@ Behaviors that change in your tests
 -----------------------------------
 
 * ``commit()`` and ``rollback()`` raise :class:`OperationalError` when
-  no transaction is open. Wrap writes in ``with db.atomic():`` and you
-  won't call them directly.
+  no transaction is open. Or wrap writes in ``with db.atomic():``.
 * ``executescript`` runs inside any open transaction rather than
-  implicitly committing. Wrap with ``atomic()`` if you want it atomic.
+  implicitly committing. Consider wrapping with ``atomic()``.
 * ``cysqlite.Row`` is case-sensitive on string lookup, stdlib's is
   case-insensitive.
 * ``autocommit`` is a method here, not the settable attribute stdlib 3.12
   added. ``if db.autocommit:`` is always true because it references the
-  bound method, call it as ``db.autocommit()``.
+  bound method, so call ``db.autocommit()``.
   :attr:`~Connection.in_transaction` is a property in both.
 * Anywhere you parsed an ``IntegrityError`` message, catch the exact
   subclass instead.
-
-What you gain
--------------
-
-* :meth:`Connection.atomic` for nested transactions without manual savepoints.
-* Five ``IntegrityError`` and four ``OperationalError`` subclasses.
-* Failing SQL embedded in error messages.
-* Built-in :func:`dict_factory`, :func:`rank_bm25`, :func:`rank_lucene`,
-  :func:`levenshtein_dist`, :func:`damerau_levenshtein_dist`,
-  :class:`median`.
-* Virtual tables via :class:`TableFunction`.
-* :class:`Blob` as a full :class:`io.RawIOBase`.
-* :mod:`cysqlite.aio` for asyncio.
-* :class:`cysqlite.utils.Pool` for read/write separation under WAL.
-* :func:`cysqlite.utils.slow_query_log` for one-line slow-query logging.
-* ``pragma(..., permanent=True)`` for pragmas that survive reconnects.

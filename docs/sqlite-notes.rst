@@ -26,7 +26,8 @@ Notably SQLite does not natively support:
 * **fixed-precision decimals** - no native type. cysqlite stores ``Decimal`` as
   ``REAL`` by default, which can lose precision for values that aren't exactly
   representable as floats. Register a custom :ref:`adapter <sqlite-notes-adapters>`
-  to store as ``TEXT`` if exact precision is required.
+  to store as ``TEXT`` if exact precision is required. Alternately store
+  currency as a scaled integer.
 * **boolean** - emulated as integer ``1`` and ``0``.
 * **json** - SQLite has JSON support, but it is stored as ``TEXT`` or ``BLOB``
   (for JSONB).
@@ -221,9 +222,9 @@ adapters and converters:
 cysqlite is more permissive about what types it will accept at bind time.
 ``UUID`` objects are bound as ``TEXT``. Any object with a ``__float__`` method
 (e.g. ``Decimal``, ``Fraction``) is bound as ``REAL``. Unsupported types raise
-``TypeError``, register an adapter to handle them. Additionally, cysqlite
-provides ISO-8601 formatting for ``datetime``, ``date`` and ``time`` out of the
-box with no surprise deprecations.  Sqlite's built-in `date functions <https://sqlite.org/lang_datefunc.html>`_
+``TypeError`` and require an adapter to handle them directly. Additionally,
+cysqlite provides ISO-8601 formatting for ``datetime``, ``date`` and ``time``
+out of the box with no surprise deprecations.  Sqlite's built-in `date functions <https://sqlite.org/lang_datefunc.html>`_
 work well on ISO-8601 format, so this allows date/times stored by ``cysqlite``
 to be usable with the builtin date functions.
 
@@ -234,8 +235,8 @@ Transactions
 
 cysqlite operates in pure autocommit mode as this is how SQLite itself operates.
 Statements execute immediately unless you've explicitly opened a transaction.
-The driver never issues implicit transaction control statements on your behalf.
-To use transactions, open one with :meth:`~Connection.atomic`, :meth:`~Connection.transaction`,
+The driver never issues implicit transaction control statements. To use
+transactions, open one with :meth:`~Connection.atomic`, :meth:`~Connection.transaction`,
 :meth:`~Connection.begin`, or by executing ``BEGIN`` directly.
 
 .. code-block:: python
@@ -305,8 +306,8 @@ Before Python 3.12, sqlite3 used the ``isolation_level`` parameter to control
 driver-managed transactions. By default a transaction auto-begins before any
 DML statement using the string compare. This transaction is held open until you
 call ``commit()`` or ``rollback()``. The ``isolation_level`` parameter controls
-what flavor of ``BEGIN`` gets emitted, but by passing ``isolation_level=None``
-you can disable driver transaction management and get something reasonable:
+what lock ``BEGIN`` acquires, but by passing ``isolation_level=None`` you can
+disable driver transaction management and get something reasonable:
 
 .. code-block:: python
 
@@ -332,9 +333,9 @@ you can disable driver transaction management and get something reasonable:
    >>> db.in_transaction
    False
 
-At time of writing this still works, but based on how CPython moves fast and
-breaks things, I expect this will stop working in the next year or two. In its
-place, CPython has given us a new, completely separate alternative:
+At time of writing this still works, but the ``LEGACY_`` prefix indicates it
+may be deprecated soon. In place of isolation level, CPython has a new,
+completely separate alternative:
 
 .. code-block:: python
 
@@ -368,35 +369,11 @@ If you didn't catch what happened there, when we set ``autocommit=True``, Python
 exception. If you call ``commit()`` and then close the connection, or let it be
 garbage-collected, all your changes are silently lost.
 
-The icing on the cake is that the "legacy" mode we're supposed to migrate
-away from handles this just fine:
-
-.. code-block:: python
-
-   >>> db = sqlite3.connect(':memory:', isolation_level=None)
-   >>> db.execute('begin')
-   >>> db.in_transaction
-   True
-   >>> db.commit()
-   >>> db.in_transaction
-   False
-
-The legacy method just works, you can call the ``commit()`` method or explicitly
-execute a ``COMMIT`` query, and both do the obvious thing. The new-and-improved
-method is doing all kinds of weird stuff.
-
 The other direction is just as bad. With ``autocommit=False`` (which the
 docs now recommend), a transaction begins immediately on connection, lasts
 until you commit, and a fresh one begins right after. Every connection is
 always in a transaction. This is problematic because of the way SQLite upgrades
 the lock when a write occurs, retaining it until a commit/rollback occurs.
-
-The end result is that, depending on your Python version and which keyword
-arguments you passed to ``connect()``, you are now in one of three
-incompatible transaction regimes, and in one of them, ``commit()`` silently
-does nothing. The predictable consequence is that the standard library has
-collected `pull requests <https://github.com/python/cpython/pull/137505>`_ like
-this one.
 
 cysqlite's answer to all of this:
 
@@ -445,7 +422,7 @@ the savepoint without affecting the outer transaction:
 
 If you need a specific lock type, pass ``lock=``. Use ``IMMEDIATE`` when
 you know you're going to write and want to fail fast if another writer holds
-the lock, rather than discovering it mid-transaction:
+the lock:
 
 .. code-block:: python
 
