@@ -284,30 +284,12 @@ or ``REPLACE``, the driver automatically begins a transaction before executing
 it. This misses things like queries using CTEs, among other interesting
 failure modes.
 
-.. note::
-   There was a moment in the Python 3.6 days where this was going to be fixed by
-   calling ``sqlite3_stmt_readonly()``, the C API SQLite provides for exactly this
-   question. The change was reverted before release because it broke
-   ``conn.execute("BEGIN IMMEDIATE")`` (``BEGIN`` isn't read-only, so the
-   new logic tried to auto-BEGIN before the user's explicit ``BEGIN`` and
-   errored). Rather than fix that edge case, the maintainers went back to string
-   matching and added a **second** special case for DDL. That's the code that's
-   been in production since 2016. `The SQLite forum <https://www.sqlite.org/forum/forumpost/1695c80438ebd464>`_
-   has some discussion. I also tried to get CPython on-board again in 2019
-   with `this pull request <https://github.com/python/cpython/pull/13216>`_.
-
-.. tip::
-   CPython loves treating backwards-compat as sacrosanct when it suits them,
-   but they will aggressively deprecate at other times. Right now they are
-   moving towards changing the way transactions work (naturally making the
-   situation even worse).
-
 Before Python 3.12, sqlite3 used the ``isolation_level`` parameter to control
 driver-managed transactions. By default a transaction auto-begins before any
 DML statement using the string compare. This transaction is held open until you
 call ``commit()`` or ``rollback()``. The ``isolation_level`` parameter controls
 what lock ``BEGIN`` acquires, but by passing ``isolation_level=None`` you can
-disable driver transaction management and get something reasonable:
+disable driver transaction management and get something reasonable.
 
 .. code-block:: python
 
