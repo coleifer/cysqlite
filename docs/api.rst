@@ -106,10 +106,10 @@ Module
 .. function:: compile_option(opt)
 
    :param str opt: option name, e.g. ``'ENABLE_FTS5'``.
-   :rtype: bool
+   :rtype: int
 
-   Return whether the given option was defined when the SQLite library was
-   compiled. The ``SQLITE_`` prefix may be omitted and matching is
+   Return ``1`` if the given option was defined when the SQLite library was
+   compiled, else ``0``. The ``SQLITE_`` prefix may be omitted and matching is
    case-insensitive.
 
 .. function:: complete_statement(sql)

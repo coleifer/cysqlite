@@ -27,7 +27,7 @@ compiled with most features enabled. Check any build with :func:`compile_option`
     >>> cysqlite.sqlite_version
     '3.53.3'
     >>> cysqlite.compile_option('ENABLE_FTS5')
-    True
+    1
 
 Building from source
 --------------------
