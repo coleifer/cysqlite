@@ -1698,6 +1698,9 @@ Connection
       * ns: estimated number of nanoseconds the statement took to run (only
         ``SQLITE_TRACE_PROFILE``), else -1.
 
+      ``SQLITE_TRACE_CLOSE`` is never delivered, because :meth:`~Connection.close`
+      unregisters the trace hook first.
+
       See `sqlite3_trace_v2 <https://sqlite.org/c3ref/c_trace.html>`_ for
       more details on trace modes and parameters.
 
