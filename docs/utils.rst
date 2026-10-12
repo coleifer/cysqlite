@@ -76,4 +76,6 @@ Utils
 
    .. method:: close()
 
-      Close all connections.
+      Close all connections. If the writer is checked out, waits for it to be
+      returned, so calling ``close()`` inside a :meth:`writer` block deadlocks.
+      Readers that are checked out are closed when they are returned.

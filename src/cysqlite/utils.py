@@ -84,8 +84,10 @@ class Pool(object):
     def close(self):
         self._closed = True
         if self._writer is not None:
-            self._writer.close()
-            self._writer = None
+            # Wait for the writer to be returned if it is checked out.
+            with self._writer_lock:
+                self._writer.close()
+                self._writer = None
         while not self._readers.empty():
             try:
                 conn = self._readers.get_nowait()
@@ -112,7 +114,10 @@ class _Reader(_ConnectionContext):
                 if self.conn.in_transaction:
                     self.conn.rollback()
             finally:
-                self.pool._readers.put(self.conn)
+                if self.pool._closed:
+                    self.conn.close()
+                else:
+                    self.pool._readers.put(self.conn)
                 self.conn = None
 
 class _Writer(_ConnectionContext):

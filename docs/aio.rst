@@ -642,4 +642,7 @@ Pool
    .. method:: close()
       :async:
 
-      Close all connections.
+      Close all connections. If the writer is checked out, waits for it to be
+      returned, so awaiting ``close()`` inside a :meth:`writer` block never
+      completes. Readers that are checked out are closed when they are
+      returned.

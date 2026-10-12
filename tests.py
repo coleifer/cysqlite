@@ -4998,6 +4998,44 @@ class TestPool(unittest.TestCase):
             with self.pool.writer() as conn:
                 pass
 
+    def test_close_waits_for_writer(self):
+        with self.pool.writer() as conn:
+            conn.execute('create table g(k)')
+
+        conns = []
+        checked_out = threading.Event()
+        release = threading.Event()
+        def write():
+            with self.pool.writer() as conn:
+                conns.append(conn)
+                with conn.atomic():
+                    conn.execute('insert into g(k) values (1)')
+                    checked_out.set()
+                    release.wait()
+
+        t = threading.Thread(target=write)
+        t.start()
+        checked_out.wait()
+        closer = threading.Thread(target=self.pool.close)
+        try:
+            closer.start()
+            closer.join(0.1)
+            self.assertTrue(closer.is_alive())  # Blocked on the writer.
+        finally:
+            release.set()
+            t.join()
+            closer.join()
+        self.assertTrue(conns[0].is_closed())
+        db = connect(self.filename)
+        self.assertEqual(db.execute_scalar('select count(*) from g'), 1)
+        db.close()
+
+    def test_close_closes_checked_out_reader(self):
+        with self.pool.reader() as conn:
+            self.pool.close()
+            self.assertFalse(conn.is_closed())
+        self.assertTrue(conn.is_closed())
+
     def test_no_writer(self):
         pool = Pool(':memory:', writer=False)
         with self.assertRaises(InterfaceError):
@@ -5546,6 +5584,41 @@ class TestAIOPool(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(InterfaceError):
             async with self.pool.writer() as conn:
                 pass
+
+    async def test_close_waits_for_writer(self):
+        async with self.pool.writer() as conn:
+            await conn.execute('create table g(k)')
+
+        checked_out = asyncio.Event()
+        release = asyncio.Event()
+        async def write():
+            async with self.pool.writer() as conn:
+                async with conn.atomic():
+                    await conn.execute('insert into g(k) values (1)')
+                    checked_out.set()
+                    await release.wait()
+            return conn
+
+        task = asyncio.create_task(write())
+        await checked_out.wait()
+        closer = asyncio.create_task(self.pool.close())
+        try:
+            await asyncio.sleep(0.1)
+            self.assertFalse(closer.done())  # Blocked on the writer.
+        finally:
+            release.set()
+        conn = await task
+        await closer
+        self.assertTrue(conn.conn.is_closed())
+        db = connect(self.filename)
+        self.assertEqual(db.execute_scalar('select count(*) from g'), 1)
+        db.close()
+
+    async def test_close_closes_checked_out_reader(self):
+        async with self.pool.reader() as conn:
+            await self.pool.close()
+            self.assertFalse(conn.conn.is_closed())
+        self.assertTrue(conn.conn.is_closed())
 
     async def test_no_writer(self):
         pool = APool(':memory:', writer=False)

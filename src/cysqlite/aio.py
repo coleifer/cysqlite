@@ -291,8 +291,10 @@ class Pool(_Pool):
     async def close(self):
         self._closed = True
         if self._writer is not None:
-            await self._writer.close()
-            self._writer = None
+            # Wait for the writer to be returned if it is checked out.
+            async with self._writer_lock:
+                await self._writer.close()
+                self._writer = None
         while not self._readers.empty():
             await self._readers.get_nowait().close()
 
@@ -308,7 +310,10 @@ class _AsyncReader(_ConnectionContext):
                 if self.conn.in_transaction:
                     await self.conn.rollback()
             finally:
-                await self.pool._readers.put(self.conn)
+                if self.pool._closed:
+                    await self.conn.close()
+                else:
+                    await self.pool._readers.put(self.conn)
                 self.conn = None
 
 class _AsyncWriter(_ConnectionContext):
