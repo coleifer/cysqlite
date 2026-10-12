@@ -2839,12 +2839,13 @@ ctypedef struct cysqlite_vtab:
 
 
 # Like cysqlite_vtab, the cysqlite_cursor embeds the base sqlite3_vtab_cursor
-# and adds fields to store references to the current index, the Python
-# implementation, the current rows' data, and a flag for whether the cursor has
-# been exhausted.
+# and adds fields to store references to the current index and rowid, the
+# Python implementation, the current rows' data, and a flag for whether the
+# cursor has been exhausted.
 ctypedef struct cysqlite_cursor:
     sqlite3_vtab_cursor base
     long long idx
+    long long rowid
     void *table_func
     void *row_data
     bint stopped
@@ -2969,6 +2970,7 @@ cdef int cyOpen(sqlite3_vtab *pBase, sqlite3_vtab_cursor **ppCursor) noexcept wi
 
     memset(<char *>pCur, 0, sizeof(pCur[0]))
     pCur.idx = 0
+    pCur.rowid = 0
     pCur.row_data = NULL
     pCur.stopped = False
 
@@ -3036,15 +3038,16 @@ cdef int _store_row(cysqlite_cursor *pCur, object table_func,
            len(<tuple>tmp[1]) != ncols:
             raise ValueError('iterate() must return (rowid, tuple of %s cols)'
                              % ncols)
-        pCur.idx = tmp[0]
+        pCur.rowid = tmp[0]
         row = <tuple>tmp[1]
     else:
         if len(tmp) != ncols:
             raise ValueError('iterate() must return (tuple of %s cols)'
                              % ncols)
         row = tmp
-        pCur.idx += 1
+        pCur.rowid = pCur.idx + 1
 
+    pCur.idx += 1
     Py_INCREF(row)
     pCur.row_data = <void *>row
     pCur.stopped = False
@@ -3116,7 +3119,7 @@ cdef int cyColumn(sqlite3_vtab_cursor *pBase, sqlite3_context *ctx,
 
     # Special case: rowid column
     if iCol == -1:
-        sqlite3_result_int64(ctx, <sqlite3_int64>pCur.idx)
+        sqlite3_result_int64(ctx, <sqlite3_int64>pCur.rowid)
         return SQLITE_OK
 
     if pCur.row_data == NULL:
@@ -3147,7 +3150,7 @@ cdef int cyRowid(sqlite3_vtab_cursor *pBase, sqlite3_int64 *pRowid) noexcept:
     if pCur == NULL or pRowid == NULL:
         return SQLITE_ERROR
 
-    pRowid[0] = <sqlite3_int64>pCur.idx
+    pRowid[0] = <sqlite3_int64>pCur.rowid
     return SQLITE_OK
 
 

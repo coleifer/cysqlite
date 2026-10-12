@@ -4514,6 +4514,24 @@ class TestTableFunctionRefactor(BaseTestCase):
 
         self.assertChainCause(BadRowid, ValueError, None)
 
+    def test_with_rowid_idx_is_row_index(self):
+        # Regression: with_rowid passed the previous rowid to iterate() as
+        # idx, so non-sequential rowids ended iteration early.
+        class Sparse(TableFunction):
+            name = 'sparse'
+            columns = ['x']
+            with_rowid = True
+            def initialize(self):
+                self.rows = [(5, ('a',)), (9, ('b',)), (2, ('c',))]
+            def iterate(self, idx):
+                if idx >= len(self.rows):
+                    raise StopIteration
+                return self.rows[idx]
+
+        Sparse.register(self.db)
+        self.assertEqual(self.db.execute('select rowid, x from sparse')
+                         .fetchall(), [(5, 'a'), (9, 'b'), (2, 'c')])
+
     def test_idx_driven_function_in_join(self):
         # SQLite reuses one cursor across xFilter calls when a table function
         # is on the inner side of a join. Regression: cyFilter did not reset
