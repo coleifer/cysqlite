@@ -3,8 +3,6 @@
 Utils
 =====
 
-cysqlite utilities.
-
 .. module:: cysqlite.utils
 
 .. function:: slow_query_log(conn, threshold_ms=50, logger=None, level=logging.WARNING, expand_sql=True)
@@ -16,7 +14,7 @@ cysqlite utilities.
    :param bool expand_sql: expand bound parameters in query.
 
    Register a ``sqlite3_trace_v2`` callback that will log slow queries to
-   the given logger. Overrides previously-registered :py:meth:`~Connection.trace`
+   the given logger. Overrides previously-registered :py:meth:`~Connection.trace`.
 
 
 .. class:: Pool(database, readers=4, writer=True, **connect_kwargs)
@@ -61,16 +59,14 @@ cysqlite utilities.
 
    .. method:: reader()
 
-      :return: read-only connection from pool.
-      :rtype: :class:`Connection`
+      :return: context-manager yielding a read-only :class:`Connection`.
       :raises: :class:`InterfaceError` if pool has been closed.
 
       Context-manager which checks out a read-only connection from the pool.
 
    .. method:: writer()
 
-      :return: read/write connection from pool.
-      :rtype: :class:`Connection`
+      :return: context-manager yielding the read/write :class:`Connection`.
       :raises: :class:`InterfaceError` if pool has been closed or if writer
          connection was disabled.
 

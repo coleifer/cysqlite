@@ -22,14 +22,14 @@ five simple types:
 
 Notably SQLite does not natively support:
 
-* **datetime / date** - store these as ISO-formatted text or as unix timestamps.
-* **fixed-precision decimals** - no native type. cysqlite stores ``Decimal`` as
+* datetime / date - store these as ISO-formatted text or as unix timestamps.
+* fixed-precision decimals - no native type. cysqlite stores ``Decimal`` as
   ``REAL`` by default, which can lose precision for values that aren't exactly
   representable as floats. Register a custom :ref:`adapter <sqlite-notes-adapters>`
   to store as ``TEXT`` if exact precision is required. Alternately store
   currency as a scaled integer.
-* **boolean** - emulated as integer ``1`` and ``0``.
-* **json** - SQLite has JSON support, but it is stored as ``TEXT`` or ``BLOB``
+* boolean - emulated as integer ``1`` and ``0``.
+* json - SQLite has JSON support, but it is stored as ``TEXT`` or ``BLOB``
   (for JSONB).
 
 SQLite will store any value in a column regardless of its declared type, using
@@ -95,7 +95,7 @@ Adapters
 You can add custom adapters to control exactly how Python types are sent to
 SQLite using :meth:`Connection.register_adapter` and the :meth:`~Connection.adapter`
 decorator. For example, it may be desirable to store ``Decimal`` values as
-``TEXT`` in order to avoid float-point precision issues, or to store ``date``
+``TEXT`` in order to avoid floating-point precision issues, or to store ``date``
 as an 8-digit integer:
 
 .. code-block:: python
@@ -124,10 +124,7 @@ Converters
 -----------
 
 By default, no special attempts at type inference are applied to data coming
-**from** SQLite. As you can see in the above examples, all our Python values
-were coerced to reasonable SQLite-friendly representations. But that richness
-is lost when reading data from SQLite into Python without specific helpers that
-read each column's declared type.
+**from** SQLite.
 
 To convert data going from SQLite into Python, you will need to register one or
 more converters using :meth:`Connection.register_converter` or using the
@@ -179,7 +176,7 @@ Below are some examples:
    js = {'key': {'nested': 'value'}, 'arr': ['i0', 1, 2., None]}
    dec = Decimal('1.3')
 
-   # When we INSERT the JSON, note that we need to dump it to string.
+   # When we INSERT the JSON, we need to dump it to string.
    db.execute('insert into vals (ts, js, dec) values (?, ?, ?)',
               (ts, json.dumps(js), dec))
 
@@ -192,7 +189,7 @@ The converter accepts a ``data_type`` and uses the following rules for matching
 a specified data-type to what SQLite tells us:
 
 * Matching is case-insensitive, e.g. ``JSON`` or ``json`` is fine.
-* Split on the first whitespace or ``"("`` character, e.g. if SQLite
+* Split on the first space or ``"("`` character, e.g. if SQLite
   tells us the data-type is ``NUMERIC(10, 2)``, cysqlite will attempt to
   find a converter named ``numeric``.
 
@@ -202,9 +199,9 @@ Differences from stdlib
 The stdlib ``sqlite3`` module uses different conventions for registering
 adapters and converters:
 
-* Adapters and converters in ``sqlite3`` are registered *globally*. In
+* Adapters and converters in ``sqlite3`` are registered globally. In
   ``cysqlite``, they are scoped to the :class:`Connection`.
-* ``sqlite3`` converters - functions that transform values coming *from*
+* ``sqlite3`` converters - functions that transform values coming from
   SQLite back into richer Python types - are disabled by default, and are
   enabled via the ``detect_types`` parameter on ``connect()``. Two modes
   are available: matching against the column's declared type
@@ -269,11 +266,11 @@ Why autocommit
 --------------
 
 SQLite allows only one writer at a time, and a transaction that has performed
-**any** write will hold an exclusive lock until it commits or rolls back. An
+**any** write will hold the write lock until it commits or rolls back. An
 application that holds transactions open longer than necessary, even by
 accident, will see ``OperationalError: database is locked`` under concurrency.
-The standard lib ``sqlite3`` makes this class of bug trivially easy to write:
-you execute an ``UPDATE``, a transaction opens silently, and then your
+The standard lib ``sqlite3`` makes this class of bug trivially easy to write.
+You execute an ``UPDATE``, a transaction opens silently, and then your
 application spends more time issuing ``SELECT`` queries or handling other
 things before you call ``commit()``, which finally releases the lock.
 
@@ -413,8 +410,8 @@ the lock:
 
 If you explicitly want a flat transaction without savepoint nesting, use
 :meth:`~Connection.transaction` instead of :meth:`~Connection.atomic`.
-Nested ``transaction()`` calls no-op on the inner levels, only the outermost
-block controls commit/rollback.
+Nested ``transaction()`` calls do not commit on the inner levels. Only the
+outermost block commits.
 
 For partial rollbacks within a larger transaction, :meth:`~Connection.atomic`
 (or :meth:`~Connection.savepoint`) provides savepoints that can be committed or

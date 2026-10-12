@@ -3,7 +3,7 @@
 Installation
 ============
 
-cysqlite can be installed four ways. Pick the one that fits:
+cysqlite can be installed four ways:
 
 * Binary wheel with SQLite embedded: ``pip install cysqlite``.
 * Source build against the system SQLite:
@@ -139,8 +139,8 @@ Or do the same by hand with a zip from the
 .. code-block:: shell
 
     unzip sqlite3mc-*-amalgamation.zip 'sqlite3mc_amalgamation.*'
-    mv sqlite3mc_amalgamation.c cysqlite/sqlite3.c
-    mv sqlite3mc_amalgamation.h cysqlite/sqlite3.h
+    mv sqlite3mc_amalgamation.c sqlite3.c
+    mv sqlite3mc_amalgamation.h sqlite3.h
 
 Verify:
 

@@ -137,7 +137,8 @@ truthy value from the commit hook (or raising) turns the ``COMMIT`` into a
 
    db.commit_hook(None)              # clear the hook
 
-The update hook fires after every INSERT, UPDATE or DELETE:
+The update hook fires for each row inserted, updated or deleted in a rowid
+table:
 
 .. code-block:: python
 

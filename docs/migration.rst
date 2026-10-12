@@ -85,8 +85,8 @@ Row factories
 -------------
 
 cysqlite's ``Row`` factory provides attribute access and ``.as_dict()`` on top
-of the stdlib's index/name/keys interface. Note that name lookup is
-case-sensitive in cysqlite, case-insensitive in stdlib.
+of the stdlib's index/name/keys interface. Name lookup is case-sensitive in
+cysqlite, case-insensitive in stdlib.
 
 .. list-table::
    :header-rows: 1
@@ -121,7 +121,7 @@ Adapters and converters
 -----------------------
 
 stdlib registers globally, while cysqlite registers per connection. There is
-no ``detect_types`` flag, converters always consult the declared column type.
+no ``detect_types`` flag. Converters always consult the declared column type.
 
 .. list-table::
    :header-rows: 1
@@ -167,7 +167,7 @@ Error handling
 --------------
 
 cysqlite splits ``IntegrityError`` and ``OperationalError`` based on the
-extended error code, so you can catch the specific error (e.g. duplicate
+error code, so you can catch the specific error (e.g. duplicate
 ``PRIMARY KEY`` raises ``PrimaryKeyIntegrityError``):
 
 .. list-table::

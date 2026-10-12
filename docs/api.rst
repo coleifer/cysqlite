@@ -87,13 +87,13 @@ Module
    default threading mode the underlying SQLite library is compiled with.
    The SQLite threading modes are:
 
-   1. **Single-thread**: In this mode, all mutexes are disabled and SQLite is
-      unsafe to use in more than a single thread at once.
-   2. **Multi-thread**: In this mode, SQLite can be safely used by multiple threads
-      provided that no single database connection is used simultaneously in two
-      or more threads.
-   3. **Serialized**: In serialized mode, SQLite can be safely used by multiple
-      threads with no restriction.
+   * Single-thread. All mutexes are disabled and SQLite is unsafe to use in
+     more than a single thread at once.
+   * Multi-thread. SQLite can be safely used by multiple threads provided that
+     no single database connection is used simultaneously in two or more
+     threads.
+   * Serialized. SQLite can be safely used by multiple threads with no
+     restriction.
 
    The value of this constant is determined by ``sqlite3_threadsafe()``, and
    will return one of three values:
@@ -118,8 +118,7 @@ Module
    :rtype: bool
 
    Return whether the string appears to contain one or more complete SQL
-   statements. Like the stdlib helper of the same name, useful for building
-   interactive shells.
+   statements. Behaves like the stdlib helper of the same name.
 
 .. function:: vfs_list()
 
@@ -214,7 +213,8 @@ Connection
    .. property:: callback_error
 
       Return the most-recent error raised inside a user-defined callback. Upon
-      reading (or when the database is closed) this value is cleared.
+      reading (or when the database is closed, or when a raised error chains
+      it as ``__cause__``) this value is cleared.
 
    .. method:: register_adapter(python_type, fn)
 
@@ -258,9 +258,9 @@ Connection
              res = db.execute_scalar('select ?', (val,))
              print(f'{res} ({type(res)})')
 
-         # {"key": "value"} <class 'str'>
-         # 1767344645.0 <class 'float'>
-         # 1.3 <class 'str'>
+         # {"key": "value"} (<class 'str'>)
+         # 1767344645.0 (<class 'float'>)
+         # 1.3 (<class 'str'>)
 
       .. seealso:: :meth:`Connection.register_converter`
 
@@ -304,7 +304,7 @@ Connection
       SQLite tells us:
 
       * Matching is case-insensitive, e.g. ``JSON`` or ``json`` is fine.
-      * Split on the first whitespace or ``"("`` character, e.g. if SQLite
+      * Split on the first space or ``"("`` character, e.g. if SQLite
         tells us the data-type is ``NUMERIC(10, 2)``, cysqlite will attempt to
         find a converter named ``numeric``.
 
@@ -337,7 +337,7 @@ Connection
          js = {'key': {'nested': 'value'}, 'arr': ['i0', 1, 2., None]}
          dec = Decimal('1.3')
 
-         # When we INSERT the JSON, note that we need to dump it to string.
+         # When we INSERT the JSON, we need to dump it to string.
          db.execute('insert into vals (ts, js, dec) values (?, ?, ?)',
                     (ts, json.dumps(js), dec))
 
@@ -391,7 +391,7 @@ Connection
       :param python_type: python data-type to adapt, e.g. ``dict``.
       :param adapter: ``callable`` that accepts a single value and adapts it.
 
-      Short-hand method to register a convert and an adapter at once.
+      Short-hand method to register a converter and an adapter at once.
 
       Example:
 
@@ -424,8 +424,8 @@ Connection
           database was already closed returns ``False``.
       :rtype: bool
       :raises: :class:`OperationalError` if transaction is still active (and
-          ``force`` not specified), **or** an error occurs while closing the
-          connection.
+          ``force`` not specified), **or** :class:`InternalError` if an error
+          occurs while closing the connection.
 
    .. method:: is_closed()
 
@@ -444,8 +444,7 @@ Connection
       .. note::
           The use of :meth:`~Connection.cursor` is optional. There is no
           performance difference between creating a cursor and calling
-          :meth:`Cursor.execute` versus calling :meth:`Connection.execute`,
-          as the latter will create and return a :class:`Cursor`.
+          :meth:`Cursor.execute` versus calling :meth:`Connection.execute`.
 
    .. method:: execute(sql, params=None, row_factory=SENTINEL)
 
@@ -489,7 +488,7 @@ Connection
    .. method:: executemany(sql, seq_of_params)
 
       Create a new :class:`Cursor` and call :meth:`~Cursor.executemany` with
-      with given *sql* and *seq_of_params*.
+      the given *sql* and *seq_of_params*.
 
       Queries executed by :meth:`~Connection.executemany` must not return any
       result rows, or this will result in an :class:`OperationalError`.
@@ -581,8 +580,7 @@ Connection
 
       Create a new :class:`Cursor` and call :meth:`~Cursor.execute` with the
       given *sql* and *params*. Returns the first value of the first result
-      row, if one exists. Useful for aggregates or queries that only return a
-      single value.
+      row, if one exists.
 
       :param str sql: SQL query to execute.
       :param params: parameters for query (optional).
@@ -604,8 +602,8 @@ Connection
 
       .. note::
           SQLite does not support nesting transactions using BEGIN/COMMIT. To
-          have nested transactions, SAVEPOINTs must be used within a
-          transaction. SAVEPOINTs are safe to nest.
+          have nested transactions, use SAVEPOINTs. SAVEPOINTs are safe to
+          nest.
 
           To avoid having to do book-keeping, use :meth:`Connection.atomic` to
           decorate or wrap blocks which need to be executed atomically within a
@@ -734,7 +732,7 @@ Connection
          # Print the usernames of all users.
          print(db.execute('select username from users').fetchall())
 
-         # Prints [("alice",), ("dale",)]
+         # Prints [('alice',), ('dale',)]
 
    .. method:: transaction(lock=None)
 
@@ -776,7 +774,7 @@ Connection
    .. method:: savepoint(sid=None)
 
       Create a context-manager that runs all queries in the wrapped block in
-      a savepoint. Savepoints can only be used within an active transaction.
+      a savepoint.
 
       Calls to :meth:`~Connection.savepoint` can be nested.
 
@@ -841,9 +839,7 @@ Connection
    .. method:: interrupt()
 
       Cause any pending database operation to abort and return at its earliest
-      opportunity. This routine is typically called in response to a user
-      action such as pressing "Cancel" or Ctrl-C where the user wants a long
-      query operation to halt immediately.
+      opportunity.
 
       Example:
 
@@ -891,7 +887,7 @@ Connection
 
       :param str key: pragma name.
       :param value: value to use (when setting pragma).
-      :param str database: database name to apply pragma to, *optional*.
+      :param str database: database name to apply pragma to, optional.
       :param bool multi: when ``True``, return all results. Useful for pragmas
          that return multiple rows of data, e.g. ``table_list``.
       :param bool permanent: Restore this pragma if connection closes and is
@@ -918,7 +914,7 @@ Connection
              size_in_kb = abs(cache_size)
          else:
              # Positive values are in pages.
-             size_in_kb = cache_size * db.pragma('page_size')
+             size_in_kb = cache_size * db.pragma('page_size') // 1024
 
          print(f'Cache size: {size_in_kb}')
 
@@ -930,14 +926,14 @@ Connection
 
       List all tables in the database.
 
-      :param str database: database name, *optional*.
+      :param str database: database name, optional.
       :return: ``list`` of table names.
 
    .. method:: get_views(database=None)
 
       List all VIEWs in the database.
 
-      :param str database: database name, *optional*.
+      :param str database: database name, optional.
       :return: ``list`` of :class:`View` tuples.
 
       Example:
@@ -955,7 +951,7 @@ Connection
       List all INDEXES on the table.
 
       :param str table: table name.
-      :param str database: database name, *optional*.
+      :param str database: database name, optional.
       :return: ``list`` of :class:`Index` tuples.
 
       Example:
@@ -981,7 +977,7 @@ Connection
       List of columns in the table.
 
       :param str table: table name.
-      :param str database: database name to query, *optional*.
+      :param str database: database name to query, optional.
       :return: ``list`` of :class:`Column` tuples.
 
       Example:
@@ -1011,7 +1007,7 @@ Connection
       key order.
 
       :param str table: table name.
-      :param str database: database name to query, *optional*.
+      :param str database: database name to query, optional.
       :return: ``list`` of key column names.
 
       Example:
@@ -1026,7 +1022,7 @@ Connection
       List of foreign-keys in the table.
 
       :param str table: table name.
-      :param str database: database name to query, *optional*.
+      :param str database: database name to query, optional.
       :return: ``list`` of :class:`ForeignKey` tuples.
 
       Example:
@@ -1047,7 +1043,7 @@ Connection
 
       :param str table: table name.
       :param str column: column name.
-      :param str database: database name to query, *optional*.
+      :param str database: database name to query, optional.
       :return: metadata for column.
       :rtype: :class:`ColumnMetadata`
 
@@ -1070,8 +1066,8 @@ Connection
       Perform an online backup to the given destination :class:`Connection`.
 
       :param Connection dest: database to serve as destination for the backup.
-      :param int pages: Number of pages per iteration. Default value of -1
-          indicates all pages should be backed-up in a single step.
+      :param int pages: Number of pages per iteration. The default backs up
+          all pages in a single step.
       :param str name: Name of source database (may differ if you used ATTACH
           DATABASE to load multiple databases). Defaults to "main".
       :param progress: Progress callback, called with three parameters: the
@@ -1109,8 +1105,8 @@ Connection
       Perform an online backup to the given destination file.
 
       :param str filename: database file to serve as destination for the backup.
-      :param int pages: Number of pages per iteration. Default value of -1
-          indicates all pages should be backed-up in a single step.
+      :param int pages: Number of pages per iteration. The default backs up
+          all pages in a single step.
       :param str name: Name of source database (may differ if you used ATTACH
           DATABASE to load multiple databases). Defaults to "main".
       :param progress: Progress callback, called with three parameters: the
@@ -1193,11 +1189,10 @@ Connection
       .. note::
 
          ``deserialize()`` does **not** validate *data* at the time of the
-         call, it simply installs the buffer as the database's backing
-         store. If *data* is not a valid SQLite image, the error will
-         surface on the first query that accesses the schema, typically
-         as an :class:`OperationalError` with message ``file is not a
-         database``.
+         call. It installs the buffer as the database's backing store. If
+         *data* is not a valid SQLite image, the first query that accesses
+         the schema raises :class:`DatabaseCorruptError` with message
+         ``file is not a database``.
 
       Example:
 
@@ -1225,7 +1220,7 @@ Connection
          # Query the attached database.
          db.execute('select * from snapshot.users')
 
-      Round-trip pattern (useful for snapshotting, testing, etc):
+      Round-trip pattern:
 
       .. code-block:: python
 
@@ -1243,7 +1238,7 @@ Connection
       :param str column: column where blob is stored.
       :param int rowid: id of row to open.
       :param bool read_only: open blob in read-only mode.
-      :param str database: database name, *optional*.
+      :param str database: database name, optional.
       :return: a handle to access the BLOB data.
       :rtype: :class:`Blob`
 
@@ -1309,18 +1304,17 @@ Connection
           The callable must return a type natively supported by SQLite. Set to
           ``None`` to remove an existing SQL function, in which case ``name``
           is required and ``nargs`` must match the original registration.
-      :type func: callback | None
+      :type fn: callback | None
       :param str name: name of the SQL function. If unspecified, the name of
           the Python function will be used.
-      :param int narg:
+      :param int nargs:
           The number of arguments the SQL function can accept. If ``-1``, it
           may take any number of arguments.
       :param bool deterministic:
           If ``True`` (the default), the created SQL function is marked as
-          `deterministic <https://sqlite.org/deterministic.html>`_, which allows
-          SQLite to perform additional optimizations: the result can be reused
-          across references within a single row, and the function can be used
-          inside indexes on expressions, CHECK constraints, generated columns,
+          `deterministic <https://sqlite.org/deterministic.html>`_. SQLite may
+          then factor calls out of inner loops, and the function can be used
+          in indexes on expressions, CHECK constraints, generated columns,
           and partial-index ``WHERE`` clauses.
 
       Functions are automatically re-registered if the connection is closed and
@@ -1363,10 +1357,9 @@ Connection
           If ``-1``, it may take any number of arguments.
       :param bool deterministic:
           If ``True`` (the default), the created SQL function is marked as
-          `deterministic <https://sqlite.org/deterministic.html>`_, which allows
-          SQLite to perform additional optimizations: the result can be reused
-          across references within a single row, and the function can be used
-          inside indexes on expressions, CHECK constraints, generated columns,
+          `deterministic <https://sqlite.org/deterministic.html>`_. SQLite may
+          then factor calls out of inner loops, and the function can be used
+          in indexes on expressions, CHECK constraints, generated columns,
           and partial-index ``WHERE`` clauses.
 
       Aggregates are automatically re-registered if the connection is closed and
@@ -1377,7 +1370,7 @@ Connection
       .. code-block:: python
 
          class MD5(object):
-             def initialize(self):
+             def __init__(self):
                  self.md5 = hashlib.md5()
 
              def step(self, value):
@@ -1427,10 +1420,9 @@ Connection
           If ``-1``, it may take any number of arguments.
       :param bool deterministic:
           If ``True`` (the default), the created SQL function is marked as
-          `deterministic <https://sqlite.org/deterministic.html>`_, which allows
-          SQLite to perform additional optimizations: the result can be reused
-          across references within a single row, and the function can be used
-          inside indexes on expressions, CHECK constraints, generated columns,
+          `deterministic <https://sqlite.org/deterministic.html>`_. SQLite may
+          then factor calls out of inner loops, and the function can be used
+          in indexes on expressions, CHECK constraints, generated columns,
           and partial-index ``WHERE`` clauses.
 
       Window functions are automatically re-registered if the connection is
@@ -1501,25 +1493,23 @@ Connection
    .. method:: create_table_function(fn, name=None, columns=None, params=None)
 
       Register a plain callable as a table-valued virtual table. This is a
-      shortcut for the full :class:`TableFunction` API: instead of writing a
+      shortcut for the full :class:`TableFunction` API. Instead of writing a
       subclass, pass a function or generator that yields rows.
 
       *fn* is called once per query and must return an iterable of rows. Each
       row is a :class:`tuple` (or :class:`list`) with one value per column.
-      Raising / exhausting the iterator ends the table.
+      Exhausting the iterator ends the table.
 
-      :param fn: the callable to expose. Its signature defines the function's
-          parameters: each becomes a hidden SQL column that may be supplied
+      :param fn: the callable to expose. Each parameter in its signature
+          becomes a hidden SQL column that may be supplied
           positionally in the FROM clause (``fn(1, 2)``) or as a ``WHERE``
           equality constraint. Parameters with a Python default are optional
           in SQL and fall back to the default, while parameters without a
           default are required. ``*args``/``**kwargs`` are not exposed.
       :param str name: SQL name for the function. Defaults to ``fn.__name__``.
-      :param list columns: column names, or ``(name, type)`` 2-tuples. Required
-          (cysqlite declares the table schema before any row is produced, so
-          the columns cannot be inferred from the data). May instead be set as
-          a ``columns`` attribute on *fn*. Column names must not collide with
-          the parameter names.
+      :param list columns: column names, or ``(name, type)`` 2-tuples.
+          Required. May instead be set as a ``columns`` attribute on *fn*.
+          Column names must not collide with the parameter names.
       :param list params: parameter names. Defaults to the names taken from
           ``fn``'s signature. Use this parameter to override.
       :returns: the generated :class:`TableFunction` subclass.
@@ -1550,8 +1540,7 @@ Connection
    .. method:: table_function(name=None, columns=None, params=None)
 
       Decorator form of :meth:`create_table_function`. Registers the decorated
-      callable on this connection and returns it unchanged (so it remains
-      usable as an ordinary function).
+      callable on this connection and returns it unchanged.
 
       .. code-block:: python
 
@@ -1570,10 +1559,9 @@ Connection
       on the current connection. The callback accepts no parameters.
 
       If the callback returns a truthy value or raises an exception, the
-      ``COMMIT`` is converted into a ``ROLLBACK`` (this matches the behavior
-      of the stdlib ``sqlite3`` commit hook). When the callback raises, the
-      exception is additionally chained as ``__cause__`` on the error raised
-      by the failed commit.
+      ``COMMIT`` is converted into a ``ROLLBACK``. When the callback raises,
+      the exception is additionally chained as ``__cause__`` on the error
+      raised by the failed commit.
 
       :param fn: callable or ``None`` to clear the current hook.
       :type fn: callable | None
@@ -1619,12 +1607,12 @@ Connection
       :param fn: callable or ``None`` to clear the current hook.
       :type fn: callable | None
 
-      Register a callback to be executed whenever the database is written to
-      (via an *UPDATE*, *INSERT* or *DELETE* query). The callback should
-      accept the following parameters:
+      Register a callback to be executed whenever a row in a rowid table is
+      inserted, updated or deleted. The callback should accept the following
+      parameters:
 
-      * ``query`` - the type of query, either *INSERT*, *UPDATE* or *DELETE*.
-      * database name - the default database is named *main*.
+      * ``query`` - the type of query, either INSERT, UPDATE or DELETE.
+      * database name - the default database is named ``main``.
       * table name - name of table being modified.
       * rowid - the rowid of the row being modified.
 
@@ -1748,7 +1736,7 @@ Connection
 
       An exception raised by the callback does not interrupt the operation.
       The exception is recorded on :attr:`~Connection.callback_error` and the
-      query proceeds. Return a non-zero value to interrupt.
+      query proceeds.
 
       Example:
 
@@ -1795,8 +1783,8 @@ Connection
          # Replace the default busy timeout with the aggressive busy handler.
          db.set_busy_handler(timeout=10.0)
 
-         # Now concurrent writers will use jittered retries instead of a
-         # simple flat sleep, reducing lock contention.
+         # Now concurrent writers will use jittered retries, reducing lock
+         # contention.
 
    .. method:: enable_load_extension(enabled=True)
 
@@ -1805,13 +1793,13 @@ Connection
    .. method:: optimize(debug=False, run_tables=True, set_limit=True, check_table_sizes=False, dry_run=False)
 
       :param bool debug: debug-mode, do not actually perform any optimizations,
-         instead print one line of text for each optimization that would have
+         instead return one line of text for each optimization that would have
          been done.
       :param bool run_tables: run ANALYZE on tables that might benefit from it.
       :param bool set_limit: when running ANALYZE set a temporary analysis
          limit to prevent excess run-time.
       :param bool check_table_sizes: check size of all tables, not just those
-         that have changed recently, to see if any would benefit from ANALYZE.
+         that have been recently used, to see if any would benefit from ANALYZE.
       :param bool dry_run: see all optimizations that would have been
          performed without doing them.
 
@@ -1903,8 +1891,8 @@ Connection
       :param int n: number of WAL frames between auto-checkpoints. Set to ``0``
          to disable automatic checkpointing.
 
-      Configure the WAL auto-checkpoint interval. After every *n* frames are
-      written to the WAL, a passive checkpoint is run automatically.
+      Configure the WAL auto-checkpoint interval. After a commit that leaves
+      *n* or more frames in the WAL, a passive checkpoint is run automatically.
 
       Example:
 
@@ -1929,7 +1917,7 @@ Connection
          but also truncates the WAL file.
       :param bool restart: use ``SQLITE_CHECKPOINT_RESTART`` - like full, but
          also waits for readers.
-      :param str name: database name to checkpoint, *optional*.
+      :param str name: database name to checkpoint, optional.
       :return: a tuple of ``(wal_size, checkpointed_pages)``.
       :raises: :class:`ValueError` if more than one of ``full``, ``truncate``,
          or ``restart`` is specified.
@@ -1963,9 +1951,8 @@ Connection
    .. method:: set_foreign_keys_enabled(enabled)
    .. method:: get_foreign_keys_enabled()
 
-      Enable or disable foreign-key constraint enforcement. For historical
-      reasons, many builds of SQLite do not ship with foreign-key constraints
-      enabled by default.
+      Enable or disable foreign-key constraint enforcement. Many builds of
+      SQLite do not ship with foreign-key constraints enabled by default.
 
       Example:
 
@@ -2148,7 +2135,7 @@ Cursor
 
       Execute the given *sql* repeatedly for each parameter group in *seq_of_params*.
 
-      Queries executed by :meth:`~Connection.executemany` must not return any
+      Queries executed by :meth:`~Cursor.executemany` must not return any
       result rows, or this will result in an :class:`OperationalError`.
 
       :param str sql: SQL query to execute.
@@ -2329,7 +2316,7 @@ Cursor
              for row in curs:
                  print(row)
 
-         # Cursor is now closed and the statement cache is released.
+         # Cursor is now closed.
 
 Row Factories
 -------------
@@ -2339,7 +2326,7 @@ Row Factories
    :param Cursor cursor:
    :param tuple data:
 
-   Highly-optimized row class compatible with ``sqlite3.Row``, intended to be
+   Row class compatible with ``sqlite3.Row``, intended to be
    used with :attr:`Connection.row_factory` or :attr:`Cursor.row_factory`.
    Supports the following access patterns:
 
@@ -2421,7 +2408,7 @@ Blob
    :param str column: Name of column being accessed.
    :param int rowid: Primary-key of row being accessed.
    :param bool read_only: Prevent any modifications to the blob data.
-   :param str database: Name of database containing table, *optional*.
+   :param str database: Name of database containing table, optional.
 
    .. note:: ``Blob`` implements ``io.RawIOBase``.
 
@@ -2456,12 +2443,12 @@ Blob
 
    .. method:: read(size=-1)
 
-      :param int size: Only read up to *n* bytes from current position in file.
+      :param int size: Only read up to *size* bytes from current position in file.
       :return: Blob data
       :rtype: bytes
 
-      Read up to *n* bytes from the current position in the blob file. If *n*
-      is less than zero, the entire blob will be read.
+      Read up to *size* bytes from the current position in the blob file. If
+      *size* is less than zero, the rest of the blob will be read.
 
    .. method:: seek(offset, whence=0)
 
@@ -2534,7 +2521,7 @@ Blob
 
    .. method:: readlines(hint=-1)
 
-      :param int hint: Maximum number of bytes to read.
+      :param int hint: Stop reading lines once this many bytes have been read.
       :return: Lines of data from the current offset.
       :rtype: list
 
@@ -2841,7 +2828,7 @@ Example :class:`TableFunction` that supports INSERT/UPDATE/DELETE queries:
        print(row)
 
    # (1, 'k1', 'v1z')
-   # (2, 'k2', 'v1yz')
+   # (2, 'k2', 'v2yz')
    # (3, 'k3', 'v3z')
 
    db.execute('delete from memstore where key = ?', ('k2',))
@@ -2870,8 +2857,8 @@ Example :class:`TableFunction` that supports INSERT/UPDATE/DELETE queries:
 
 .. class:: TableFunction
 
-   :class:`TableFunction` implementations must provide two attributes and
-   implement two methods, described below.
+   :class:`TableFunction` implementations must provide the ``columns``
+   attribute and implement two methods, described below.
 
    .. attribute:: columns
 
@@ -2895,20 +2882,19 @@ Example :class:`TableFunction` that supports INSERT/UPDATE/DELETE queries:
 
    .. attribute:: name
 
-      *Optional* - specify the name for the table function. If not provided,
+      Optional - specify the name for the table function. If not provided,
       name will be taken from the class name.
 
    .. attribute:: with_rowid
 
-      *Optional*, default ``False`` - specify rowid for each row returned.
+      Optional, default ``False`` - specify rowid for each row returned.
       Rows returned by the ``iterate()`` method must be of form
       ``(rowid, (row, data, ...))``.
 
    .. attribute:: print_tracebacks
 
-      *Optional*, default ``False`` - when ``True``, print a full traceback
+      Optional, default ``False`` - when ``True``, print a full traceback
       for any errors that occur in the table-function's callback methods.
-      When ``False``, only the generic :class:`OperationalError` is visible.
 
    .. method:: initialize(**parameter_values)
 
@@ -2920,7 +2906,7 @@ Example :class:`TableFunction` that supports INSERT/UPDATE/DELETE queries:
 
    .. method:: iterate(idx)
 
-       :param int idx: current iteration step, or more specifically rowid.
+       :param int idx: 0-based index of the row being requested.
        :returns: A tuple of row data corresponding to the columns named
            in the :attr:`~TableFunction.columns` attribute.
 
@@ -3003,9 +2989,6 @@ Example :class:`TableFunction` that supports INSERT/UPDATE/DELETE queries:
 Helpers
 -------
 
-cysqlite includes a handful of miscellaneous helpers for various things that
-may come up when you're using SQLite.
-
 .. function:: rank_bm25(...)
 
    `Okapi BM25 <https://en.wikipedia.org/wiki/Okapi_BM25>`_ ranking algorithm
@@ -3063,14 +3046,12 @@ may come up when you're using SQLite.
 .. function:: rank_lucene(...)
 
    Works similarly to :func:`rank_bm25` but uses a slightly different algorithm
-   derived from Lucene. See the above section on :func:`rank_bm25` for usage
-   example.
+   derived from Lucene. See :func:`rank_bm25` for a usage example.
 
 .. function:: levenshtein_dist(a, b)
 
    C implementation of `Levenshtein Distance <https://en.wikipedia.org/wiki/Levenshtein_distance>`_
-   algorithm for comparing similarity of two strings. Useful for fuzzy matching
-   of strings.
+   algorithm for comparing similarity of two strings.
 
    Usage:
 
@@ -3088,8 +3069,7 @@ may come up when you're using SQLite.
 .. function:: damerau_levenshtein_dist(a, b)
 
    C implementation of `Damerau Levenshtein Distance <https://en.wikipedia.org/wiki/Damerau%E2%80%93Levenshtein_distance>`_
-   algorithm for comparing similarity of two strings. Useful for fuzzy matching
-   of strings.
+   algorithm for comparing similarity of two strings.
 
    Usage:
 
@@ -3157,7 +3137,8 @@ exception hierarchy.
    Exception raised for errors that are due to problems with the processed data
    like division by zero, numeric value out of range, etc.
 
-   *Currently not used.*
+   Corresponds to ``SQLITE_RANGE``, ``SQLITE_MISMATCH`` and ``SQLITE_TOOBIG``
+   errors.
 
 .. class:: OperationalError
 
@@ -3187,8 +3168,6 @@ exception hierarchy.
 
    Exception raised in case a method or database API was used which is not
    supported by the database.
-
-   *Currently not used.*
 
 IntegrityError Subclasses
 ^^^^^^^^^^^^^^^^^^^^^^^^^

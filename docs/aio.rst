@@ -225,7 +225,6 @@ AsyncConnection
       :async:
 
       Execute a query and return the first column of the first row, or ``None``.
-      Useful for aggregates or queries that only return a single value.
 
       :param str sql: SQL query.
       :param params: parameters (optional).
@@ -357,7 +356,6 @@ AsyncConnection
    .. method:: savepoint(sid=None)
 
       Create an async context-manager that runs queries in a savepoint.
-      Savepoints can only be used within an active transaction.
 
       Calls to :meth:`~AsyncConnection.savepoint` can be nested.
 
@@ -504,7 +502,8 @@ AsyncCursor
    .. property:: description
 
       Column description tuples for the current result set, or ``None`` if the
-      last operation did not produce rows. Each tuple contains ``(name,)``.
+      last operation was a write that returned no columns. Each tuple contains
+      ``(name,)``.
 
       This property reads from the synchronous cursor without dispatching.
 
@@ -606,8 +605,7 @@ Pool
 
    .. method:: reader()
 
-      :return: read-only connection from pool.
-      :rtype: :class:`AsyncConnection`
+      :return: context-manager yielding a read-only :class:`AsyncConnection`.
       :raises: :class:`InterfaceError` if pool has been closed.
 
       Context-manager which checks out a read-only async connection from the pool.
@@ -623,8 +621,7 @@ Pool
 
    .. method:: writer()
 
-      :return: read/write connection from pool.
-      :rtype: :class:`AsyncConnection`
+      :return: context-manager yielding the read/write :class:`AsyncConnection`.
       :raises: :class:`InterfaceError` if pool has been closed or if writer
          connection was disabled.
 
