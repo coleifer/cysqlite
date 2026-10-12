@@ -2123,7 +2123,7 @@ cdef int _collation_cb(void *data, int n1, const void *data1,
 cdef int _commit_cb(void *data) noexcept with gil:
     # C-callback that delegates to the Python commit handler. If the Python
     # function returns a truthy value or raises an exception, the COMMIT is
-    # converted into a ROLLBACK (matching the stdlib sqlite3 behavior).
+    # converted into a ROLLBACK.
     cdef _Callback cb = <_Callback>data
 
     try:
