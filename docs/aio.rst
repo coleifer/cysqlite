@@ -106,7 +106,7 @@ Module
           await db.execute('create table if not exists kv ("key", "value")')
           await db.execute('insert into kv values (?, ?)', ('hello', 'asyncio'))
 
-      # Connection is closed.
+      # Connection is closed. Any open transaction was rolled back.
 
 
 AsyncConnection
@@ -260,12 +260,16 @@ AsyncConnection
 
       If no transaction is active, raises :class:`OperationalError`.
 
-   .. method:: close()
+   .. method:: close(force=False)
       :async:
 
       Close the underlying database connection and shut down the background
       thread. Waits up to 5 seconds for the thread to exit.
 
+      :param bool force: Force close, even if transaction is open (any open
+          transaction will be rolled-back).
+      :raises OperationalError: if a transaction is open and ``force`` is not
+          specified. The background thread keeps running.
       :raises RuntimeError: if the background thread does not terminate.
 
       After ``close()``, further operations raise :class:`OperationalError`.

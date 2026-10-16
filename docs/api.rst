@@ -198,6 +198,23 @@ Connection
       # Custom row factory
       conn = cysqlite.Connection('app.db', row_factory=cysqlite.Row)
 
+   The connection is a context manager and decorator. Entering opens the
+   connection if it is closed. When the outermost block exits, any open
+   transaction is rolled back and the connection is closed. Nested blocks do
+   nothing on exit. It never commits. Use :meth:`~Connection.atomic` for
+   transactions.
+
+   .. code-block:: python
+
+      with cysqlite.connect('app.db') as conn:
+          conn.execute('insert into users (name) values (?)', ('alice',))
+
+      # Connection is closed.
+
+      @conn
+      def count_users():
+          return conn.execute_scalar('select count(*) from users')
+
    .. attribute:: row_factory
 
       Factory for creating row instances from query results, e.g. :class:`Row`.
@@ -3124,6 +3141,11 @@ exception hierarchy.
 
    Exception that is the base class of all other error exceptions. You can use
    this to catch all errors with one single except statement.
+
+   .. attribute:: sqlite_errorcode
+
+      Extended result code, e.g. ``2067`` for ``SQLITE_CONSTRAINT_UNIQUE``.
+      Only set on errors reported by SQLite.
 
 .. class:: InterfaceError
 
