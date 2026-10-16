@@ -113,13 +113,13 @@ class AsyncConnection(object):
     async def rollback(self):
         await self._submit(self.conn.rollback)
 
-    async def close(self):
+    async def close(self, force=False):
         if self._closed:
             return False
 
         # If close fails (e.g. a transaction is open) leave the worker alive
         # so the caller can roll back and retry.
-        await self._submit(self.conn.close)
+        await self._submit(self.conn.close, force)
         self._closed = True
         self.queue.put(SHUTDOWN)
         await self.loop.run_in_executor(None, self._thread.join, 5.0)
@@ -162,7 +162,7 @@ class AsyncConnection(object):
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.close()
+        await self.close(force=True)
 
 
 class AsyncCursor:

@@ -245,16 +245,50 @@ class TestConnection(BaseTestCase):
 
         self.assertTrue(db.is_closed())
 
-        with self.assertRaises(ValueError) as ctx:
+        with self.assertRaises(ValueError):
             with db:
                 txn = db.transaction()
-                txn.__enter__()  # This will cause close() to fail.
+                txn.__enter__()
                 raise ValueError('fail2')
 
-            # Close failed.
+        # Exit rolled back the open transaction and closed the connection.
+        self.assertTrue(db.is_closed())
+        txn.__exit__(None, None, None)  # No-op once closed.
+        self.assertFalse(db.close())
+
+    def test_context_nesting(self):
+        db = Connection(':memory:', autoconnect=False)
+        with db:
+            with db:
+                db.execute('select 1')
             self.assertFalse(db.is_closed())
-            txn.__exit__(None, None, None)
-            self.assertTrue(db.close())
+
+            try:
+                with db:
+                    raise ValueError('fail')
+            except ValueError:
+                pass
+            self.assertFalse(db.is_closed())
+        self.assertTrue(db.is_closed())
+
+        # Error propagates through nested blocks, outermost exit rolls back.
+        with self.assertRaises(ValueError):
+            with db:
+                db.begin()
+                with db:
+                    raise ValueError('fail')
+        self.assertTrue(db.is_closed())
+
+        @db
+        def inner():
+            return db.execute_scalar('select 1')
+
+        @db
+        def outer():
+            return inner(), db.is_closed()
+
+        self.assertEqual(outer(), (1, False))
+        self.assertTrue(db.is_closed())
 
     def test_in_transaction_on_closed_connection(self):
         db = Connection(':memory:', autoconnect=False)
@@ -1372,6 +1406,23 @@ class TestQueryTypes(BaseTestCase):
             ins('k2', -1)
         with self.assertRaises(IntegrityError):  # not null violation.
             ins(None, 3)
+
+    def test_error_code(self):
+        e = self.db.execute
+        e('create table g (k text not null unique)')
+        e("insert into g (k) values ('k1')")
+
+        with self.assertRaises(UniqueIntegrityError) as ctx:
+            e("insert into g (k) values ('k1')")
+        self.assertEqual(ctx.exception.sqlite_errorcode, 2067)
+
+        with self.assertRaises(NotNullIntegrityError) as ctx:
+            e('insert into g (k) values (NULL)')
+        self.assertEqual(ctx.exception.sqlite_errorcode, 1299)
+
+        with self.assertRaises(OperationalError) as ctx:
+            e('select * from missing')
+        self.assertEqual(ctx.exception.sqlite_errorcode, SQLITE_ERROR)
 
 
 class TestAdapters(BaseTestCase):
@@ -5121,6 +5172,19 @@ class TestAIOConnection(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await db.close())
         await asyncio.wait_for(db.close(), timeout=1.0)
         self.assertFalse(await db.close())
+
+    async def test_context_open_transaction(self):
+        # Exit rolls back an open transaction and closes, as with sync.
+        async with aconnect(':memory:') as db:
+            await db.begin()
+        self.assertTrue(db.conn.is_closed())
+
+        with self.assertRaises(ValueError):
+            async with aconnect(':memory:') as db:
+                await db.begin()
+                raise ValueError
+        self.assertTrue(db.conn.is_closed())
+        self.assertFalse(db._thread.is_alive())
 
     async def test_close_open_transaction(self):
         # A failed close leaves the worker alive so the caller can recover.
