@@ -5,7 +5,7 @@ User-defined functions and hooks
 
 cysqlite lets you extend SQLite using ordinary Python callables: scalar
 functions, aggregates, window functions, table-valued functions and collations.
-It also exposes a set of connection hooks for introspection. Everything below
+It also exposes a set of connection hooks. Everything below
 is registered on a :class:`Connection`, and functions and collations are
 automatically re-registered if the connection is closed and re-opened.
 
@@ -50,6 +50,7 @@ Use :meth:`Connection.create_aggregate`:
 
    db.create_aggregate(Product)
    db.execute('select product(value) from data').fetchone()
+   # (24,)
 
 Window functions
 ----------------
@@ -78,6 +79,9 @@ Use :meth:`Connection.create_window_function`:
            return self._value
 
    db.create_window_function(MySum, 'mysum', 1)
+   db.execute('select value, mysum(value) over '
+              '(order by value rows 1 preceding) from data').fetchall()
+   # [(1, 1), (2, 3), (3, 5), (4, 7)]
 
 Table-valued functions
 ----------------------
@@ -117,12 +121,11 @@ Use :meth:`Connection.create_collation`:
        return (s1 < s2) - (s1 > s2)
 
    db.create_collation(collate_reverse, 'reverse')
-   db.execute('select value from data order by value collate reverse')
+   db.execute('select name from users order by name collate reverse').fetchall()
+   # [('carol',), ('bob',), ('alice',)]
 
 Connection hooks
 ----------------
-
-Hooks allow introspecting what happens on a connection.
 
 Commit and rollback hooks fire at transaction boundaries. Returning a
 truthy value from the commit hook (or raising) turns the ``COMMIT`` into a

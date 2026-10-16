@@ -201,8 +201,7 @@ Connection
    The connection is a context manager and decorator. Entering opens the
    connection if it is closed. When the outermost block exits, any open
    transaction is rolled back and the connection is closed. Nested blocks do
-   nothing on exit. It never commits. Use :meth:`~Connection.atomic` for
-   transactions.
+   nothing on exit. Use :meth:`~Connection.atomic` for transactions.
 
    .. code-block:: python
 
@@ -232,6 +231,18 @@ Connection
       Return the most-recent error raised inside a user-defined callback. Upon
       reading (or when the database is closed, or when a raised error chains
       it as ``__cause__``) this value is cleared.
+
+   .. attribute:: database
+                  flags
+                  timeout
+                  vfs
+                  uri
+                  cached_statements
+                  extensions
+                  pragmas
+
+      The constructor arguments, read again each time the connection opens.
+      :meth:`~Connection.pragma` with ``permanent=True`` adds to ``pragmas``.
 
    .. method:: register_adapter(python_type, fn)
 
@@ -958,10 +969,10 @@ Connection
       .. code-block:: python
 
          print(db.get_views())
-         [View(name='entries_public',
-               sql='CREATE VIEW entries_public AS SELECT ... '),
-          View(...),
-          ...]
+         # [View(name='entries_public',
+         #       sql='CREATE VIEW entries_public AS SELECT ... '),
+         #  View(...),
+         #  ...]
 
    .. method:: get_indexes(table, database=None)
 
@@ -976,18 +987,18 @@ Connection
       .. code-block:: python
 
          print(db.get_indexes('entry'))
-         [Index(
-              name='entry_public_list',
-              sql='CREATE INDEX "entry_public_list" ...',
-              columns=['timestamp'],
-              unique=False,
-              table='entry'),
-          Index(
-              name='entry_slug',
-              sql='CREATE UNIQUE INDEX "entry_slug" ON "entry" ("slug")',
-              columns=['slug'],
-              unique=True,
-              table='entry')]
+         # [Index(
+         #      name='entry_public_list',
+         #      sql='CREATE INDEX "entry_public_list" ...',
+         #      columns=['timestamp'],
+         #      unique=False,
+         #      table='entry'),
+         #  Index(
+         #      name='entry_slug',
+         #      sql='CREATE UNIQUE INDEX "entry_slug" ON "entry" ("slug")',
+         #      columns=['slug'],
+         #      unique=True,
+         #      table='entry')]
 
    .. method:: get_columns(table, database=None)
 
@@ -1002,21 +1013,21 @@ Connection
       .. code-block:: python
 
          print(db.get_columns('entry'))
-         [Column(
-              name='id',
-              data_type='INTEGER',
-              null=False,
-              primary_key=True,
-              table='entry',
-              default=None),
-          Column(
-              name='title',
-              data_type='TEXT',
-              null=False,
-              primary_key=False,
-              table='entry',
-              default=None),
-          ...]
+         # [Column(
+         #      name='id',
+         #      data_type='INTEGER',
+         #      null=False,
+         #      primary_key=True,
+         #      table='entry',
+         #      default=None),
+         #  Column(
+         #      name='title',
+         #      data_type='TEXT',
+         #      null=False,
+         #      primary_key=False,
+         #      table='entry',
+         #      default=None),
+         #  ...]
 
    .. method:: get_primary_keys(table, database=None)
 
@@ -1032,7 +1043,7 @@ Connection
       .. code-block:: python
 
          print(db.get_primary_keys('entry'))
-         ['id']
+         # ['id']
 
    .. method:: get_foreign_keys(table, database=None)
 
@@ -1047,12 +1058,12 @@ Connection
       .. code-block:: python
 
          print(db.get_foreign_keys('entrytag'))
-         [ForeignKey(
-              column='entry_id',
-              dest_table='entry',
-              dest_column='id',
-              table='entrytag'),
-          ...]
+         # [ForeignKey(
+         #      column='entry_id',
+         #      dest_table='entry',
+         #      dest_column='id',
+         #      table='entrytag'),
+         #  ...]
 
    .. method:: table_column_metadata(table, column, database=None)
 
@@ -1069,14 +1080,14 @@ Connection
       .. code-block:: python
 
          db.table_column_metadata('entry', 'title')
-         ColumnMetadata(
-            table='entry',
-            column='title',
-            datatype='TEXT',
-            collation='BINARY',
-            not_null=True,
-            primary_key=False,
-            auto_increment=False)
+         # ColumnMetadata(
+         #    table='entry',
+         #    column='title',
+         #    datatype='TEXT',
+         #    collation='BINARY',
+         #    not_null=True,
+         #    primary_key=False,
+         #    auto_increment=False)
 
    .. method:: backup(dest, pages=None, name=None, progress=None, src_name=None, dest_name=None)
 
@@ -1302,13 +1313,6 @@ Connection
 
       .. code-block:: python
 
-         # Create connection and indicate we want to support loadable
-         # extensions.
-         db = connect(':memory:', extensions=True)
-
-         # Alternately, we can enable loadable extensions later.
-         db.set_load_extension(True)
-
          # Load the closure table extension.
          db.load_extension('./closure.so')
 
@@ -1464,7 +1468,7 @@ Connection
                  return self._value
 
          # Register our custom window function (roughly identical to SUM).
-         db.create_window_function(MySum, 'mysum', 1, True)
+         db.create_window_function(MySum, 'mysum', 1)
 
    .. method:: create_collation(fn, name=None)
 
@@ -1639,7 +1643,7 @@ Connection
 
       .. code-block:: python
 
-         def on_update(query_type, db, table, rowid):
+         def on_update(query_type, dbname, table, rowid):
              # e.g. INSERT row 3 into table users.
              logger.info('%s row %s into table %s', query_type, rowid, table)
 
@@ -1686,7 +1690,7 @@ Connection
 
          db.authorizer(prevent_updating_log)
 
-         # raises OperationalError - not authorized (code=23).
+         # raises AuthorizationError - not authorized (code=23).
          db.execute('update log set status=? where id=?', (0, 1))
 
    .. method:: trace(fn, mask=2, expand_sql=True)
@@ -1993,7 +1997,7 @@ Connection
          db.execute('insert into parent (id) values (1)')
          db.execute('insert into child (id, pid) values (1, 1)')  # OK.
          db.execute('insert into child (id, pid) values (2, 99)')
-         # IntegrityError: FOREIGN KEY constraint failed.
+         # ForeignKeyIntegrityError: FOREIGN KEY constraint failed.
 
    .. method:: set_triggers_enabled(enabled)
    .. method:: get_triggers_enabled()

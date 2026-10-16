@@ -54,7 +54,7 @@ Utils
       with pool.reader() as conn:
           curs = conn.execute('select * from users')
 
-          # Raises OperationalError - connection is read-only.
+          # Raises ReadOnlyError - connection is read-only.
           conn.execute('insert into users (username) values (?)', ('bob',))
 
    .. method:: reader()

@@ -43,7 +43,7 @@ to match SQLite's available data-types:
 +-------------------------------+-------------------------------------------+
 | Python type                   | SQLite type                               |
 +===============================+===========================================+
-| ``datetime``                  | ``TEXT`` (isoformat with ' ' delimiter).  |
+| ``datetime``                  | ``TEXT`` (isoformat with ' ' delimiter)   |
 +-------------------------------+-------------------------------------------+
 | ``date``, ``time``            | ``TEXT`` (isoformat)                      |
 +-------------------------------+-------------------------------------------+
@@ -102,7 +102,7 @@ as an 8-digit integer:
 
    db.register_adapter(Decimal, str)
 
-   @db.adapter(datetime.date)
+   @db.adapter(date)
    def adapt_date(value):
        return int(value.strftime('%Y%m%d'))
 
@@ -221,7 +221,7 @@ cysqlite is more permissive about what types it will accept at bind time.
 (e.g. ``Decimal``, ``Fraction``) is bound as ``REAL``. Unsupported types raise
 ``TypeError`` and require an adapter to handle them directly. Additionally,
 cysqlite provides ISO-8601 formatting for ``datetime``, ``date`` and ``time``
-out of the box with no surprise deprecations.  Sqlite's built-in `date functions <https://sqlite.org/lang_datefunc.html>`_
+out of the box with no surprise deprecations. SQLite's built-in `date functions <https://sqlite.org/lang_datefunc.html>`_
 work well on ISO-8601 format, so this allows date/times stored by ``cysqlite``
 to be usable with the builtin date functions.
 
@@ -250,7 +250,7 @@ transactions, open one with :meth:`~Connection.atomic`, :meth:`~Connection.trans
        db.execute('insert into t values (3)')
    # Committed on successful exit, rolled back on exception.
 
-   # Or manage it by hand.
+   # Or manage it explicitly.
    db.begin()
    try:
        db.execute('insert into t values (4)')
