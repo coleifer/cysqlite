@@ -159,7 +159,9 @@ cdef raise_sqlite_error(Connection conn, unicode msg):
     else:
         exc = OperationalError
 
-    raise exc(f"{msg}{errmsg} (code={code}, ext={ext})") from cause
+    err = exc(f"{msg}{errmsg} (code={code}, ext={ext})")
+    err.sqlite_errorcode = ext
+    raise err from cause
 
 
 cdef class _callable_context_manager(object):
@@ -895,6 +897,7 @@ cdef class Connection(_callable_context_manager):
         object stmt_in_use  # In-use Statements, keyed by identity.
         object blob_in_use  # id(blob) -> Blob.
         int _transaction_depth
+        int _context_depth  # Nested `with conn:` blocks.
         _Callback _commit_hook, _rollback_hook, _update_hook, _auth_hook
         _Callback _trace_hook, _progress_hook
 
@@ -924,6 +927,7 @@ cdef class Connection(_callable_context_manager):
         self.stmt_in_use = {}
         self.blob_in_use = weakref.WeakValueDictionary()
         self._transaction_depth = 0
+        self._context_depth = 0
 
         if autoconnect:
             self.connect()
@@ -1079,9 +1083,15 @@ cdef class Connection(_callable_context_manager):
     def __enter__(self):
         if not self.db:
             self.connect()
+        self._context_depth += 1
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        # Only the outermost block closes.
+        self._context_depth -= 1
+        if self._context_depth > 0:
+            return False
+
         if exc_type is not None:
             try:
                 self.close(force=True)

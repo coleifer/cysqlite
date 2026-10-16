@@ -1,4 +1,7 @@
-class SqliteError(Exception): pass
+class SqliteError(Exception):
+    # Extended result code, set on errors reported by SQLite.
+    sqlite_errorcode: int
+
 class Error(SqliteError): pass
 class Warning(SqliteError): pass
 
