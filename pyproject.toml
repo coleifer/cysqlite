@@ -37,7 +37,7 @@ cysqlite = ["*.c", "*.pyx", "*.pxd", "*.pxi"]
 version = { attr = "cysqlite.__version__" }
 
 [tool.cibuildwheel]
-build = "cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
+build = "cp39-* cp310-* cp311-* cp312-* cp313-* cp314-* cp315-*"
 skip = "pp* *-musllinux_i686"
 
 # tests.py uses unix paths (/tmp), so wheels are only tested on unix.
