@@ -1693,86 +1693,65 @@ cdef class Connection(_callable_context_manager):
         cdef unicode name = table_function.name or table_function.__name__
         self._register('tablefunc', table_function, name, 0, False)
 
-    def commit_hook(self, fn):
+    cdef _Callback _hook(self, fn, settings=None):
+        # Callers register the wrapper with SQLite before storing it, since
+        # storing it frees the one SQLite was using.
         check_connection(self)
-        if fn is None:
-            self._commit_hook = None
-            sqlite3_commit_hook(self.db, NULL, NULL)
-            return
+        return None if fn is None else _Callback(self, fn, settings)
 
-        cdef _Callback callback = _Callback(self, fn)
-        self._commit_hook = callback
-        sqlite3_commit_hook(self.db, _commit_cb, <void *>callback)
+    def commit_hook(self, fn):
+        cdef _Callback cb = self._hook(fn)
+        if cb is None:
+            sqlite3_commit_hook(self.db, NULL, NULL)
+        else:
+            sqlite3_commit_hook(self.db, _commit_cb, <void *>cb)
+        self._commit_hook = cb
 
     def rollback_hook(self, fn):
-        check_connection(self)
-        if fn is None:
-            self._rollback_hook = None
+        cdef _Callback cb = self._hook(fn)
+        if cb is None:
             sqlite3_rollback_hook(self.db, NULL, NULL)
-            return
-        cdef _Callback callback = _Callback(self, fn)
-        self._rollback_hook = callback
-        sqlite3_rollback_hook(self.db, _rollback_cb, <void *>callback)
+        else:
+            sqlite3_rollback_hook(self.db, _rollback_cb, <void *>cb)
+        self._rollback_hook = cb
 
     def update_hook(self, fn):
-        check_connection(self)
-        if fn is None:
-            self._update_hook = None
+        cdef _Callback cb = self._hook(fn)
+        if cb is None:
             sqlite3_update_hook(self.db, NULL, NULL)
-            return
-
-        cdef _Callback callback = _Callback(self, fn)
-        self._update_hook = callback
-        sqlite3_update_hook(self.db, _update_cb, <void *>callback)
+        else:
+            sqlite3_update_hook(self.db, _update_cb, <void *>cb)
+        self._update_hook = cb
 
     def authorizer(self, fn):
-        check_connection(self)
-        cdef:
-            _Callback callback
-            int rc
-
-        if fn is None:
-            self._auth_hook = None
+        cdef _Callback cb = self._hook(fn)
+        cdef int rc
+        if cb is None:
             rc = sqlite3_set_authorizer(self.db, NULL, NULL)
         else:
-            callback = _Callback(self, fn)
-            self._auth_hook = callback
-            rc = sqlite3_set_authorizer(self.db, _auth_cb, <void *>callback)
-
+            rc = sqlite3_set_authorizer(self.db, _auth_cb, <void *>cb)
         if rc != SQLITE_OK:
             raise_sqlite_error(self, 'error setting authorizer: ')
+        self._auth_hook = cb
 
     def trace(self, fn, mask=2, expand_sql=True):
-        check_connection(self)
-        cdef:
-            _Callback callback
-            int rc
-
-        if fn is None:
-            self._trace_hook = None
+        cdef _Callback cb = self._hook(fn, {'expand_sql': expand_sql})
+        cdef int rc
+        if cb is None:
             rc = sqlite3_trace_v2(self.db, 0, NULL, NULL)
         else:
-            callback = _Callback(self, fn, {'expand_sql': expand_sql})
-            self._trace_hook = callback
-            rc = sqlite3_trace_v2(self.db, mask, _trace_cb, <void *>callback)
-
+            rc = sqlite3_trace_v2(self.db, mask, _trace_cb, <void *>cb)
         if rc != SQLITE_OK:
             raise_sqlite_error(self, 'error setting trace: ')
+        self._trace_hook = cb
 
     def progress(self, fn, n=1):
-        check_connection(self)
-        cdef:
-            _Callback callback
-            int rc
-
-        if fn is None:
-            self._progress_hook = None
+        cdef _Callback cb = self._hook(fn)
+        if cb is None:
             sqlite3_progress_handler(self.db, 0, NULL, NULL)
         else:
-            callback = _Callback(self, fn)
-            self._progress_hook = callback
-            sqlite3_progress_handler(self.db, n, _progress_cb,
-                                     <void *>callback)
+            sqlite3_progress_handler(self.db, n, _progress_cb, <void *>cb)
+        self._progress_hook = cb
 
     def set_busy_handler(self, timeout=5.0):
         check_connection(self)
