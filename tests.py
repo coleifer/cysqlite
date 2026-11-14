@@ -3180,6 +3180,13 @@ class TestBackup(BaseTestCase):
                 dest.execute('select count(*) from aux2.g').scalar(), 100)
             self.assertEqual(dest.get_tables(), [])
 
+        # backup_to_file passes both names through.
+        self.db.backup_to_file('/tmp/cysqlite_backup.db', name='aux1')
+        with Connection('/tmp/cysqlite_backup.db') as dest:
+            self.assertEqual(dest.get_tables(), ['a'])
+        with self.assertRaises(OperationalError):
+            self.db.backup_to_file('/tmp/cysqlite_backup.db', dest_name='x')
+
     def test_backup_progress(self):
         accum = []
 
