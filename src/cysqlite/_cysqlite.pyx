@@ -3480,7 +3480,6 @@ def compile_option(opt):
     return sqlite3_compileoption_used(bopt)
 
 
-HAS_COLUMN_METADATA = compile_option('enable_column_metadata')
 HAS_LOAD_EXTENSION = bool(CYSQLITE_HAVE_LOAD_EXTENSION)
 HAS_DESERIALIZE = bool(CYSQLITE_HAVE_DESERIALIZE)
 #HAS_PREUPDATE_HOOK = compile_option('enable_preupdate_hook')

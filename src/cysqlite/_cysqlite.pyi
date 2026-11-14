@@ -40,7 +40,6 @@ __all__ = [
 sqlite_version: str
 sqlite_version_info: tuple[int, int, int]
 threadsafety: int
-HAS_COLUMN_METADATA: int
 HAS_DESERIALIZE: bool
 HAS_LOAD_EXTENSION: bool
 
