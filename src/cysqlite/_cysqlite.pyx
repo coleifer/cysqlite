@@ -3671,7 +3671,7 @@ def rank_lucene(py_match_info, *raw_weights):
             idf = log(total_docs / (docs_with_term + 1.))
             tf = sqrt(term_frequency)
             fieldNorms = 1.0 / sqrt(doc_length)
-            score += (idf * tf * fieldNorms)
+            score += (idf * tf * fieldNorms * weight)
 
     PyMem_Free(weights)
     return -1 * score

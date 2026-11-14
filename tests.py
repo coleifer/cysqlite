@@ -4884,6 +4884,16 @@ class TestRankUDFs(BaseTestCase):
             (2, 0.036), (5, 0.042), (1, 0.047), (3, 0.049), (4, 0.049)],
             'rank_lucene')
 
+    def test_lucene_weight(self):
+        curs = self.db.execute(
+            'select rank_lucene(matchinfo(search, ?), 1), '
+            'rank_lucene(matchinfo(search, ?), 2) '
+            'from search where search match ?', ('pcnalx', 'pcnalx', 'things'))
+        rows = curs.fetchall()
+        self.assertEqual(len(rows), 2)
+        for r1, r2 in rows:
+            self.assertAlmostEqual(r2, r1 * 2)
+
 
 class TestStringDistanceUDFs(BaseTestCase):
     filename = ':memory:'
