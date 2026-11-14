@@ -3566,6 +3566,15 @@ class TestBlob(BaseTestCase):
                         (nbytes,))
         return self.db.last_insert_rowid()
 
+    def test_blob_collected_in_cycle(self):
+        # An open blob reachable only through a reference cycle.
+        blob = self.db.blob_open('register', 'data', self.create_blob_row(8))
+        cycle = {'blob': blob}
+        cycle['self'] = cycle
+        del blob, cycle
+        gc.collect()
+        self.assertEqual(self.db.execute('select 1').fetchall(), [(1,)])
+
     def test_blob(self):
         rowid1024 = self.create_blob_row(1024)
         rowid16 = self.create_blob_row(16)

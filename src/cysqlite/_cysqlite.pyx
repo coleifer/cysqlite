@@ -2473,6 +2473,7 @@ cdef inline bytes _blob_read(Blob blob, int length, int offset):
     return buf
 
 
+@cython.no_gc_clear  # dealloc closes the handle.
 cdef class Blob(object):
     cdef:
         int offset
