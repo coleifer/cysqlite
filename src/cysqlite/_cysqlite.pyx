@@ -1269,19 +1269,22 @@ cdef class Connection(_callable_context_manager):
         stmt = self.execute(sql, ('view',), row_factory=None)
         return [View(*row) for row in stmt]
 
-    def get_indexes(self, table, database=None):
+    cdef _table_pragma(self, pragma, name, database):
         database = _quote_ident(database or 'main')
-        query = (f'SELECT name, sql FROM {database}.sqlite_master '
+        return self.execute(
+            f'PRAGMA {database}.{pragma}({_quote_ident(name)})',
+            row_factory=None)
+
+    def get_indexes(self, table, database=None):
+        schema = _quote_ident(database or 'main')
+        query = (f'SELECT name, sql FROM {schema}.sqlite_master '
                  'WHERE tbl_name = ? AND type = ? ORDER BY name')
         stmt = self.execute(query, (table, 'index'), row_factory=None)
         index_to_sql = dict(stmt)
 
         # Determine which indexes have a unique constraint.
         unique_indexes = set()
-        stmt = self.execute(f'PRAGMA {database}.'
-                            f'index_list({_quote_ident(table)})',
-                            row_factory=None)
-        for row in stmt:
+        for row in self._table_pragma('index_list', table, database):
             name = row[1]
             is_unique = int(row[2]) == 1
             if is_unique:
@@ -1290,9 +1293,7 @@ cdef class Connection(_callable_context_manager):
         # Retrieve the indexed columns.
         index_columns = {}
         for index_name in sorted(index_to_sql):
-            stmt = self.execute(
-                f'PRAGMA {database}.index_info({_quote_ident(index_name)})',
-                row_factory=None)
+            stmt = self._table_pragma('index_info', index_name, database)
             index_columns[index_name] = [row[2] for row in stmt]
 
         return [
@@ -1305,26 +1306,17 @@ cdef class Connection(_callable_context_manager):
             for name in sorted(index_to_sql)]
 
     def get_columns(self, table, database=None):
-        database = _quote_ident(database or 'main')
-        stmt = self.execute(f'PRAGMA {database}.'
-                            f'table_info({_quote_ident(table)})',
-                            row_factory=None)
+        stmt = self._table_pragma('table_info', table, database)
         return [Column(r[1], r[2], not r[3], bool(r[5]), table, r[4])
                 for r in stmt]
 
     def get_primary_keys(self, table, database=None):
-        database = _quote_ident(database or 'main')
-        stmt = self.execute(f'PRAGMA {database}.'
-                            f'table_info({_quote_ident(table)})',
-                            row_factory=None)
+        stmt = self._table_pragma('table_info', table, database)
         # The pk column is the 1-based position within the primary key.
         return [name for _, name in sorted((r[5], r[1]) for r in stmt if r[5])]
 
     def get_foreign_keys(self, table, database=None):
-        database = _quote_ident(database or 'main')
-        stmt = self.execute(f'PRAGMA {database}.'
-                            f'foreign_key_list({_quote_ident(table)})',
-                            row_factory=None)
+        stmt = self._table_pragma('foreign_key_list', table, database)
         return [ForeignKey(row[3], row[2], row[4], table) for row in stmt]
 
     def table_column_metadata(self, table, column, database=None):
