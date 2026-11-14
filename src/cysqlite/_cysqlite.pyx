@@ -179,6 +179,17 @@ cdef inline unicode _quote_ident(name):
     return '"%s"' % str(name).replace('"', '""')
 
 
+cdef _adapt_text(param):
+    # Text form of the types stored as strings, SENTINEL when unsupported.
+    if isinstance(param, datetime.datetime):
+        return param.isoformat(' ')
+    elif isinstance(param, (datetime.date, datetime.time)):
+        return param.isoformat()
+    elif isinstance(param, uuid.UUID):
+        return str(param)
+    return SENTINEL
+
+
 cdef class Row(object):
     cdef:
         tuple _data
@@ -432,17 +443,13 @@ cdef class Statement(object):
                 # Decimal, Fraction, e.g.
                 rc = sqlite3_bind_double(self.st, i + 1, float(param))
             else:
-                if isinstance(param, datetime.datetime):
-                    param = param.isoformat(' ')
-                elif isinstance(param, (datetime.date, datetime.time)):
-                    param = param.isoformat()
-                elif isinstance(param, uuid.UUID):
-                    param = str(param)
-                else:
+                text = _adapt_text(param)
+                if text is SENTINEL:
                     raise TypeError(
                         'cannot bind parameter %d: type %s is not supported; '
                         'register an adapter to convert it'
                         % (i + 1, type(param).__name__))
+                param = text
                 buf = PyUnicode_AsUTF8AndSize(param, &nbytes)
                 rc = sqlite3_bind_text64(self.st, i + 1, buf,
                                          <sqlite3_uint64>nbytes,
@@ -3563,16 +3570,11 @@ cdef python_to_sqlite(sqlite3_context *context, param):
         # Decimal, Fraction, e.g.
         sqlite3_result_double(context, float(param))
     else:
-        if isinstance(param, datetime.datetime):
-            param = param.isoformat(' ')
-        elif isinstance(param, (datetime.date, datetime.time)):
-            param = param.isoformat()
-        elif isinstance(param, uuid.UUID):
-            param = str(param)
-        else:
+        text = _adapt_text(param)
+        if text is SENTINEL:
             raise TypeError('cannot convert result of type %s to a SQLite '
                             'value' % type(param).__name__)
-        buf = PyUnicode_AsUTF8AndSize(param, &nbytes)
+        buf = PyUnicode_AsUTF8AndSize(text, &nbytes)
         sqlite3_result_text64(context, buf,
                               <sqlite3_uint64>nbytes,
                               SQLITE_TRANSIENT,
