@@ -3475,25 +3475,6 @@ def status(flag):
     return (current, highwater)
 
 
-def set_singlethread():
-    return sqlite3_config(SQLITE_CONFIG_SINGLETHREAD) == SQLITE_OK
-def set_multithread():
-    return sqlite3_config(SQLITE_CONFIG_MULTITHREAD) == SQLITE_OK
-def set_serialized():
-    return sqlite3_config(SQLITE_CONFIG_SERIALIZED) == SQLITE_OK
-def set_lookaside(int size, int slots):
-    return sqlite3_config(SQLITE_CONFIG_LOOKASIDE, size, slots) == SQLITE_OK
-def set_mmap_size(default_size, max_size):
-    return sqlite3_config(SQLITE_CONFIG_MMAP_SIZE,
-                          <sqlite3_int64>default_size,
-                          <sqlite3_int64>max_size) == SQLITE_OK
-def set_stmt_journal_spill(int nbytes):
-    # nbytes is the spill-to-disk threshold. Statement journals are held in
-    # memory until their size exceeds this threshold. Set to -1 to keep
-    # journals exclusively in memory.
-    return sqlite3_config(SQLITE_CONFIG_STMTJRNL_SPILL, nbytes) == SQLITE_OK
-
-
 def compile_option(opt):
     cdef bopt = encode(opt)
     return sqlite3_compileoption_used(bopt)
