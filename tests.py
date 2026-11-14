@@ -4582,6 +4582,68 @@ class TestTableFunctionRefactor(BaseTestCase):
 
         self.assertChainCause(BadRowid, ValueError, None)
 
+    def test_hidden_param_columns(self):
+        @self.db.table_function(columns=['n'])
+        def series(start, stop=3):
+            return ((i,) for i in range(start, stop))
+
+        curs = self.db.execute('select n, start, stop from series(1, 3)')
+        self.assertEqual(curs.fetchall(), [(1, 1, 3), (2, 1, 3)])
+
+        # A param the query did not bind reads as NULL.
+        curs = self.db.execute('select n, start, stop from series(1)')
+        self.assertEqual(curs.fetchall(), [(1, 1, None), (2, 1, None)])
+
+    def test_hidden_param_names_come_from_class(self):
+        class Series(TableFunction):
+            name = 'series'
+            columns = ['n']
+            params = ['start', 'stop']
+            def initialize(self, start=0, stop=0):
+                self.params = (start, stop)  # Shadows the class attribute.
+            def iterate(self, idx):
+                start, stop = self.params
+                if start + idx >= stop: raise StopIteration
+                return (start + idx,)
+
+        Series.register(self.db)
+        curs = self.db.execute('select n, start, stop from series(1, 3)')
+        self.assertEqual(curs.fetchall(), [(1, 1, 3), (2, 1, 3)])
+
+    def test_more_than_16_params(self):
+        # SQLite re-checks constraints past the 16th by reading the hidden
+        # column.
+        class Wide(TableFunction):
+            name = 'wide'
+            columns = ['total']
+            params = ['p%d' % i for i in range(17)]
+            def initialize(self, **kw): self.total = sum(kw.values())
+            def iterate(self, idx):
+                if idx: raise StopIteration
+                return (self.total,)
+
+        Wide.register(self.db)
+        sql = 'select total from wide(%s)' % ', '.join('1' * 17)
+        self.assertEqual(self.db.execute(sql).fetchall(), [(17,)])
+
+    def test_update_with_params(self):
+        updates = []
+        class Par(TableFunction):
+            name = 'par'
+            columns = ['a', 'b']
+            params = ['p']
+            with_rowid = True
+            def initialize(self, p=None): pass
+            def iterate(self, idx):
+                if idx: raise StopIteration
+                return (7, ('A', 'B'))
+            def update(self, old_rowid, new_rowid, values):
+                updates.append((old_rowid, new_rowid, values))
+
+        Par.register(self.db)
+        self.db.execute("update par set b = 'x' where p = 1")
+        self.assertEqual(updates, [(7, 7, ('A', 'x', 1))])
+
     def test_with_rowid_idx_is_row_index(self):
         # Regression: with_rowid passed the previous rowid to iterate() as
         # idx, so non-sequential rowids ended iteration early.

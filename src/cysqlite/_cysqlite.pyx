@@ -2820,6 +2820,7 @@ ctypedef struct cysqlite_cursor:
     long long rowid
     void *table_func
     void *row_data
+    void *params
     bint stopped
 
 
@@ -2907,6 +2908,7 @@ cdef int cyOpen(sqlite3_vtab *pBase, sqlite3_vtab_cursor **ppCursor) noexcept wi
         cysqlite_cursor *pCur = <cysqlite_cursor *>0
         object table_func_cls
         object table_func
+        dict params
 
     table_func_cls = <object>pVtab.table_func_cls
 
@@ -2918,6 +2920,7 @@ cdef int cyOpen(sqlite3_vtab *pBase, sqlite3_vtab_cursor **ppCursor) noexcept wi
 
     try:
         table_func = table_func_cls()
+        params = {}
     except Exception as exc:
         _vtab_capture_exc(pVtab, exc, b'Table function init failed: ')
         sqlite3_free(pCur)
@@ -2925,6 +2928,10 @@ cdef int cyOpen(sqlite3_vtab *pBase, sqlite3_vtab_cursor **ppCursor) noexcept wi
 
     Py_INCREF(table_func)
     pCur.table_func = <void *>table_func
+    # The params bound by the current xFilter pass, for the hidden columns.
+    # Owned from open to close like table_func, so it is never NULL.
+    Py_INCREF(params)
+    pCur.params = <void *>params
     ppCursor[0] = &(pCur.base)
     return SQLITE_OK
 
@@ -2935,6 +2942,7 @@ cdef int cyClose(sqlite3_vtab_cursor *pBase) noexcept with gil:
     if pCur.row_data != NULL:
         Py_DECREF(<tuple>pCur.row_data)
     Py_DECREF(<object>pCur.table_func)
+    Py_DECREF(<dict>pCur.params)
     sqlite3_free(pCur)
     return SQLITE_OK
 
@@ -3040,12 +3048,18 @@ cdef int cyColumn(sqlite3_vtab_cursor *pBase, sqlite3_context *ctx,
         return SQLITE_OK
 
     row_data = <tuple>pCur.row_data
-    if iCol < 0 or iCol >= len(row_data):
+    if iCol < 0:
         sqlite3_result_error(ctx, encode('column index out of bounds'), -1)
         return SQLITE_ERROR
 
     try:
-        return python_to_sqlite(ctx, row_data[iCol])
+        if iCol < len(row_data):
+            return python_to_sqlite(ctx, row_data[iCol])
+        # Hidden param column: the value the query bound to it, or NULL. The
+        # names come from the class, as in cyBestIndex.
+        names = (<object>(<cysqlite_vtab *>pBase.pVtab).table_func_cls).params
+        return python_to_sqlite(
+            ctx, (<dict>pCur.params).get(names[iCol - len(row_data)]))
     except Exception as exc:
         _vtab_capture_exc(<cysqlite_vtab *>pBase.pVtab, exc,
                           b'error converting column value: ')
@@ -3071,7 +3085,7 @@ cdef int cyFilter(sqlite3_vtab_cursor *pBase, int idxNum,
         cysqlite_cursor *pCur = <cysqlite_cursor *>pBase
         cysqlite_vtab *pVtab
         object table_func
-        dict query = {}
+        dict query = <dict>pCur.params
         int idx
         tuple py_values
         list params
@@ -3081,6 +3095,7 @@ cdef int cyFilter(sqlite3_vtab_cursor *pBase, int idxNum,
     # iteration index so each filter pass restarts iterate() from row 0 rather
     # than from the stale count left by the previous pass.
     pCur.idx = 0
+    query.clear()
 
     pVtab = <cysqlite_vtab *>pBase.pVtab
     table_func = <object>pCur.table_func
