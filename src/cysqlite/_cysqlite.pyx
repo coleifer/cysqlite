@@ -2455,6 +2455,31 @@ cdef inline int _check_blob(Blob blob) except -1:
     return 0
 
 
+cdef inline int _blob_write(Blob blob, const void *buf, int length,
+                            int offset) except -1:
+    if sqlite3_blob_write(blob.blob, buf, length, offset):
+        raise_sqlite_error(blob.conn, 'error writing to blob: ')
+    return 0
+
+
+cdef tuple _blob_range(key, int blob_size):
+    # Normalize an index or slice to (start, stop).
+    cdef int idx
+    if isinstance(key, int):
+        idx = key
+        if idx < 0:
+            idx += blob_size
+        if idx < 0 or idx >= blob_size:
+            raise IndexError('blob index out of range')
+        return idx, idx + 1
+    elif isinstance(key, slice):
+        start, stop, step = key.indices(blob_size)
+        if step != 1:
+            raise ValueError('blob slice step value must be 1')
+        return start, stop
+    raise TypeError('blob index must be integer or slice')
+
+
 cdef inline bytes _blob_read(Blob blob, int length, int offset):
     # A failed read closes the handle, leaving the blob unusable.
     cdef bytes buf = PyBytes_FromStringAndSize(NULL, length)
@@ -2712,8 +2737,7 @@ cdef class Blob(object):
             if n > 0 and (<int64_t>n + <int64_t>self.offset) > <int64_t>blob_size:
                 raise ValueError('Data would go beyond end of blob.')
 
-            if sqlite3_blob_write(self.blob, buf, n, self.offset):
-                raise_sqlite_error(self.conn, 'error writing to blob: ')
+            _blob_write(self, buf, n, self.offset)
         finally:
             if buffer_acquired:
                 PyBuffer_Release(&view)
@@ -2753,32 +2777,14 @@ cdef class Blob(object):
     def __getitem__(self, key):
         _check_blob(self)
         cdef:
-            int blob_size = sqlite3_blob_bytes(self.blob)
-            int idx, start, stop, length
+            int start, stop
             bytes buf
 
+        start, stop = _blob_range(key, sqlite3_blob_bytes(self.blob))
         if isinstance(key, int):
-            idx = key
-            if idx < 0:
-                idx += blob_size
-            if idx < 0 or idx >= blob_size:
-                raise IndexError('blob index out of range')
-
-            buf = _blob_read(self, 1, idx)
+            buf = _blob_read(self, 1, start)
             return <unsigned char>PyBytes_AS_STRING(buf)[0]
-
-        if not isinstance(key, slice):
-            raise TypeError('Blob.__getitem__ must be integer or slice')
-
-        start, stop, step = key.indices(blob_size)
-        if step != 1:
-            raise ValueError('blob slice step value must be 1')
-
-        length = stop - start
-        if length <= 0:
-            return b''
-
-        return _blob_read(self, length, start)
+        return _blob_read(self, stop - start, start) if stop > start else b''
 
     def __setitem__(self, key, value):
         _check_blob(self)
@@ -2786,55 +2792,21 @@ cdef class Blob(object):
             raise _io.UnsupportedOperation('write')
 
         cdef:
-            int blob_size = sqlite3_blob_bytes(self.blob)
-            int idx, start, stop, length
-            unsigned char byte_val
+            int start, stop
             Py_buffer view
 
-        if isinstance(key, int):
-            idx = key
-            if idx < 0:
-                idx += blob_size
-            if idx < 0 or idx >= blob_size:
-                raise IndexError('blob index out of range')
+        start, stop = _blob_range(key, sqlite3_blob_bytes(self.blob))
+        if isinstance(key, int) and isinstance(value, int):
+            value = bytes((value,))  # ValueError unless in range(256).
 
-            if isinstance(value, int):
-                if not (0 <= value <= 255):
-                    raise ValueError('byte must be in range(0, 256)')
-                byte_val = <unsigned char>value
-                if sqlite3_blob_write(self.blob, &byte_val, 1, idx):
-                    raise_sqlite_error(self.conn, 'error writing to blob: ')
-            else:
-                PyObject_GetBuffer(value, &view, PyBUF_CONTIG_RO)
-                try:
-                    if view.len != 1:
-                        raise ValueError(
-                            'blob index assignment requires a single byte, '
-                            'got %d bytes' % view.len)
-                    if sqlite3_blob_write(self.blob, view.buf, 1, idx):
-                        raise_sqlite_error(self.conn,
-                                           'error writing to blob: ')
-                finally:
-                    PyBuffer_Release(&view)
-            return
-
-        if not isinstance(key, slice):
-            raise TypeError('Blob.__setitem__ must be integer or slice')
-
-        start, stop, step = key.indices(blob_size)
-        if step != 1:
-            raise ValueError('blob slice step value must be 1')
-
-        length = stop - start
         PyObject_GetBuffer(value, &view, PyBUF_CONTIG_RO)
         try:
-            if view.len != length:
+            if view.len != stop - start:
                 raise ValueError(
                     'blob slice of length %d cannot be assigned from a '
-                    'buffer of length %d' % (length, view.len))
-            if length > 0:
-                if sqlite3_blob_write(self.blob, view.buf, length, start):
-                    raise_sqlite_error(self.conn, 'error writing to blob: ')
+                    'buffer of length %d' % (stop - start, view.len))
+            if view.len:
+                _blob_write(self, view.buf, stop - start, start)
         finally:
             PyBuffer_Release(&view)
 
