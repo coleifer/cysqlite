@@ -4398,7 +4398,7 @@ class TestTableFunction(BaseTestCase):
         # Class must still be alive as the module is in use.
         self.assertIsNotNone(ref())
 
-        # Closing fires xDestroy, which DECREFs the _TableFunctionImpl. The
+        # Closing drops the wrapper SQLite was given. The
         # class is still retained by db.registrations for replay on
         # reconnect, so the connection itself must go away too.
         db.close()
@@ -4407,7 +4407,7 @@ class TestTableFunction(BaseTestCase):
 
         # Reference should be dead since the module is no longer alive.
         self.assertIsNone(ref(),
-                          '_TableFunctionImpl leaked: table function class '
+                          'wrapper leaked: table function class '
                           'still alive after connection closed')
 
     def test_vtab_refilter_no_leak(self):
@@ -4486,7 +4486,7 @@ class TestTableFunctionRefactor(BaseTestCase):
 
     def test_register_does_not_mutate_class(self):
         # The class's `name` attribute must remain None when not set;
-        # the impl resolves the default name without writing it back.
+        # registration resolves the default name without writing it back.
         class Anon(TableFunction):
             columns = ['v']
             def initialize(self): pass
