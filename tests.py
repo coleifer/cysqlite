@@ -4529,6 +4529,16 @@ class TestTableFunctionRefactor(BaseTestCase):
 
         self.assertChainCause(BadInit, ValueError, 'init fail')
 
+    def test_constructor_exception_chains_as_cause(self):
+        class BadCtor(TableFunction):
+            name = 'bad_ctor'
+            columns = ['v']
+            def __init__(self): raise ValueError('ctor fail')
+            def initialize(self): pass
+            def iterate(self, idx): raise StopIteration
+
+        self.assertChainCause(BadCtor, ValueError, 'ctor fail')
+
     def test_iterate_wrong_shape_chains_as_cause(self):
         # iterate() returning the wrong number of values should now
         # produce a clear ValueError chained as __cause__, not a silent

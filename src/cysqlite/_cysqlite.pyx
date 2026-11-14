@@ -2867,33 +2867,19 @@ cdef void set_vtab_error(sqlite3_vtab *pVtab, const char *msg) noexcept:
     pVtab.zErrMsg = sqlite3_mprintf('%s', msg)
 
 
-cdef inline Connection _vtab_connection(cysqlite_vtab *pVtab):
-    # Return the owning Conn from a vtab. Callers only run while a statement
-    # is executing on the connection, so the borrowed ptr is either valid or
-    # NULL.
-    if pVtab == NULL or pVtab.conn == NULL:
-        return None
-    return <Connection>pVtab.conn
-
-
-cdef inline void _vtab_capture_exc(sqlite3_vtab *pBase, Connection conn,
-                                   object table_func_cls, object exc,
-                                   bytes prefix) noexcept with gil:
+cdef void _vtab_capture_exc(cysqlite_vtab *pVtab, object exc,
+                            bytes prefix) noexcept:
     # Stash `exc` on the connection for propagation (__cause__), surface the
-    # error via the vTab's zErrMsg and optionally print a trace. Used by
-    # cyNext, cyFilter and cyUpdate so user exceptions don't get swallowed
-    # behind a generic OperationalError.
+    # error via the vtab's zErrMsg and optionally print a trace.
     cdef bytes msg
-    if conn is not None:
-        conn._callback_error = exc
-    if table_func_cls is not None and \
-       getattr(table_func_cls, 'print_tracebacks', False):
+    (<Connection>pVtab.conn)._callback_error = exc
+    if (<object>pVtab.table_func_cls).print_tracebacks:
         traceback.print_exc()
     try:
         msg = prefix + encode('%s: %s' % (type(exc), exc))
     except Exception:
         msg = prefix + b'(error formatting exception)'
-    set_vtab_error(pBase, <const char *>msg)
+    set_vtab_error(&pVtab.base, <const char *>msg)
 
 
 # We define an xConnect function, but leave xCreate NULL so that the
@@ -2945,17 +2931,8 @@ cdef int cyConnect(sqlite3 *db, void *pAux, int argc, const char *const*argv,
 
 
 cdef int cyDisconnect(sqlite3_vtab *pBase) noexcept with gil:
-    cdef:
-        cysqlite_vtab *pVtab = <cysqlite_vtab *>pBase
-        object table_func_cls
-
-    if pVtab == NULL:
-        return SQLITE_OK
-
-    if pVtab.table_func_cls != NULL:
-        table_func_cls = <object>(pVtab.table_func_cls)
-        Py_DECREF(table_func_cls)
-
+    cdef cysqlite_vtab *pVtab = <cysqlite_vtab *>pBase
+    Py_DECREF(<object>pVtab.table_func_cls)
     sqlite3_free(pVtab)
     return SQLITE_OK
 
@@ -2969,9 +2946,6 @@ cdef int cyOpen(sqlite3_vtab *pBase, sqlite3_vtab_cursor **ppCursor) noexcept wi
         object table_func_cls
         object table_func
 
-    if pVtab == NULL or pVtab.table_func_cls == NULL:
-        return SQLITE_ERROR
-
     table_func_cls = <object>pVtab.table_func_cls
 
     pCur = <cysqlite_cursor *>sqlite3_malloc(sizeof(pCur[0]))
@@ -2979,17 +2953,11 @@ cdef int cyOpen(sqlite3_vtab *pBase, sqlite3_vtab_cursor **ppCursor) noexcept wi
         return SQLITE_NOMEM
 
     memset(<char *>pCur, 0, sizeof(pCur[0]))
-    pCur.idx = 0
-    pCur.rowid = 0
-    pCur.row_data = NULL
-    pCur.stopped = False
 
     try:
         table_func = table_func_cls()
     except Exception as exc:
-        if table_func_cls.print_tracebacks:
-            traceback.print_exc()
-        set_vtab_error(pBase, encode(f'Table function init failed: {exc}'))
+        _vtab_capture_exc(pVtab, exc, b'Table function init failed: ')
         sqlite3_free(pCur)
         return SQLITE_ERROR
 
@@ -3000,22 +2968,11 @@ cdef int cyOpen(sqlite3_vtab *pBase, sqlite3_vtab_cursor **ppCursor) noexcept wi
 
 
 cdef int cyClose(sqlite3_vtab_cursor *pBase) noexcept with gil:
-    cdef:
-        cysqlite_cursor *pCur = <cysqlite_cursor *>pBase
-        object table_func
-
-    if pCur == NULL:
-        return SQLITE_OK
+    cdef cysqlite_cursor *pCur = <cysqlite_cursor *>pBase
 
     if pCur.row_data != NULL:
         Py_DECREF(<tuple>pCur.row_data)
-        pCur.row_data = NULL
-
-    if pCur.table_func != NULL:
-        table_func = <object>pCur.table_func
-        Py_DECREF(table_func)
-        pCur.table_func = NULL
-
+    Py_DECREF(<object>pCur.table_func)
     sqlite3_free(pCur)
     return SQLITE_OK
 
@@ -3067,7 +3024,7 @@ cdef int _store_row(cysqlite_cursor *pCur, object table_func,
 # Pull the next row from the table function and store it on the cursor. Shared
 # by cyFilter (first row, after it resets idx) and cyNext.
 cdef int _vtab_advance(cysqlite_cursor *pCur, cysqlite_vtab *pVtab,
-                       Connection conn, object table_func) noexcept with gil:
+                       object table_func) noexcept with gil:
     cdef object raw
 
     if pCur.row_data != NULL:
@@ -3084,16 +3041,14 @@ cdef int _vtab_advance(cysqlite_cursor *pCur, cysqlite_vtab *pVtab,
         pCur.stopped = True
         return SQLITE_OK
     except Exception as exc:
-        _vtab_capture_exc(<sqlite3_vtab *>pVtab, conn, type(table_func), exc,
-                          b'iterate() raised: ')
+        _vtab_capture_exc(pVtab, exc, b'iterate() raised: ')
         pCur.stopped = True
         return SQLITE_ERROR
 
     try:
         _store_row(pCur, table_func, raw)
     except Exception as exc:
-        _vtab_capture_exc(<sqlite3_vtab *>pVtab, conn, type(table_func), exc,
-                          b'iterate() returned invalid row: ')
+        _vtab_capture_exc(pVtab, exc, b'iterate() returned invalid row: ')
         pCur.stopped = True
         return SQLITE_ERROR
 
@@ -3101,15 +3056,8 @@ cdef int _vtab_advance(cysqlite_cursor *pCur, cysqlite_vtab *pVtab,
 
 
 cdef int cyNext(sqlite3_vtab_cursor *pBase) noexcept with gil:
-    cdef:
-        cysqlite_cursor *pCur = <cysqlite_cursor *>pBase
-        cysqlite_vtab *pVtab
-
-    if pCur == NULL or pCur.table_func == NULL:
-        return SQLITE_ERROR
-
-    pVtab = <cysqlite_vtab *>pBase.pVtab
-    return _vtab_advance(pCur, pVtab, _vtab_connection(pVtab),
+    cdef cysqlite_cursor *pCur = <cysqlite_cursor *>pBase
+    return _vtab_advance(pCur, <cysqlite_vtab *>pBase.pVtab,
                          <object>pCur.table_func)
 
 
@@ -3118,14 +3066,7 @@ cdef int cyColumn(sqlite3_vtab_cursor *pBase, sqlite3_context *ctx,
                   int iCol) noexcept with gil:
     cdef:
         cysqlite_cursor *pCur = <cysqlite_cursor *>pBase
-        cysqlite_vtab *pVtab
-        Connection conn
-        object table_func_cls
         tuple row_data
-
-    if pCur == NULL:
-        sqlite3_result_error(ctx, encode('invalid cursor'), -1)
-        return SQLITE_ERROR
 
     # Special case: rowid column
     if iCol == -1:
@@ -3144,30 +3085,19 @@ cdef int cyColumn(sqlite3_vtab_cursor *pBase, sqlite3_context *ctx,
     try:
         return python_to_sqlite(ctx, row_data[iCol])
     except Exception as exc:
-        pVtab = <cysqlite_vtab *>pBase.pVtab
-        conn = _vtab_connection(pVtab)
-        table_func_cls = <object>pVtab.table_func_cls \
-            if pVtab != NULL and pVtab.table_func_cls != NULL else None
-        _vtab_capture_exc(<sqlite3_vtab *>pVtab, conn, table_func_cls, exc,
+        _vtab_capture_exc(<cysqlite_vtab *>pBase.pVtab, exc,
                           b'error converting column value: ')
         return SQLITE_ERROR
 
 
 cdef int cyRowid(sqlite3_vtab_cursor *pBase, sqlite3_int64 *pRowid) noexcept:
-    cdef:
-        cysqlite_cursor *pCur = <cysqlite_cursor *>pBase
-
-    if pCur == NULL or pRowid == NULL:
-        return SQLITE_ERROR
-
-    pRowid[0] = <sqlite3_int64>pCur.rowid
+    pRowid[0] = <sqlite3_int64>(<cysqlite_cursor *>pBase).rowid
     return SQLITE_OK
 
 
 # Return a boolean indicating whether the cursor has been consumed.
 cdef int cyEof(sqlite3_vtab_cursor *pBase) noexcept:
-    cdef cysqlite_cursor *pCur = <cysqlite_cursor *>pBase
-    return 1 if (pCur == NULL or pCur.stopped) else 0
+    return (<cysqlite_cursor *>pBase).stopped
 
 
 # The filter method is called on the first iteration. This method is where we
@@ -3179,14 +3109,10 @@ cdef int cyFilter(sqlite3_vtab_cursor *pBase, int idxNum,
         cysqlite_cursor *pCur = <cysqlite_cursor *>pBase
         cysqlite_vtab *pVtab
         object table_func
-        Connection conn
         dict query = {}
         int idx
         tuple py_values
         list params
-
-    if pCur == NULL or pCur.table_func == NULL:
-        return SQLITE_ERROR
 
     # SQLite reuses one cursor across multiple xFilter calls (e.g. a table
     # function on the inner side of a join / correlated subq). Reset the
@@ -3195,7 +3121,6 @@ cdef int cyFilter(sqlite3_vtab_cursor *pBase, int idxNum,
     pCur.idx = 0
 
     pVtab = <cysqlite_vtab *>pBase.pVtab
-    conn = _vtab_connection(pVtab)
     table_func = <object>pCur.table_func
 
     if idxStr == NULL and table_func._nparams:
@@ -3208,8 +3133,7 @@ cdef int cyFilter(sqlite3_vtab_cursor *pBase, int idxNum,
     try:
         py_values = sqlite_to_python(argc, argv)
     except Exception as exc:
-        _vtab_capture_exc(<sqlite3_vtab *>pVtab, conn, type(table_func), exc,
-                          b'error converting parameters: ')
+        _vtab_capture_exc(pVtab, exc, b'error converting parameters: ')
         return SQLITE_ERROR
 
     for idx, param in enumerate(params):
@@ -3221,12 +3145,11 @@ cdef int cyFilter(sqlite3_vtab_cursor *pBase, int idxNum,
     try:
         table_func.initialize(**query)
     except Exception as exc:
-        _vtab_capture_exc(<sqlite3_vtab *>pVtab, conn, type(table_func), exc,
-                          b'initialize() raised: ')
+        _vtab_capture_exc(pVtab, exc, b'initialize() raised: ')
         return SQLITE_ERROR
 
     # Get first row of data.
-    return _vtab_advance(pCur, pVtab, conn, table_func)
+    return _vtab_advance(pCur, pVtab, table_func)
 
 
 # SQLite will (in some cases, repeatedly) call the xBestIndex method to try and
@@ -3244,9 +3167,6 @@ cdef int cyBestIndex(sqlite3_vtab *pBase, sqlite3_index_info *pIdxInfo) \
         int nParams
         bytes joinedCols
         object required
-
-    if pVtab == NULL or pVtab.table_func_cls == NULL:
-        return SQLITE_ERROR
 
     table_func_cls = <object>pVtab.table_func_cls
     nParams = table_func_cls._nparams
@@ -3317,42 +3237,27 @@ cdef int cyUpdate(sqlite3_vtab *pBase, int argc, sqlite3_value **argv,
         cysqlite_vtab *pVtab = <cysqlite_vtab *>pBase
         object table_func_cls
         object table_func
-        Connection conn
         tuple py_values
 
-    if pVtab == NULL or pVtab.table_func_cls == NULL:
-        set_vtab_error(pBase, b'Invalid vtab')
-        return SQLITE_ERROR
-
     table_func_cls = <object>pVtab.table_func_cls
-    conn = _vtab_connection(pVtab)
 
     try:
         py_values = sqlite_to_python(argc, argv)
         table_func = table_func_cls()
 
-        # Determine operation type:
         if argc == 1:
-            result = table_func.delete(py_values[0])
+            table_func.delete(py_values[0])
         elif py_values[0] is None:
-            new_rowid_val = py_values[1] if len(py_values) > 1 else None
-            column_values = py_values[2:] if len(py_values) > 2 else []
-
-            result = table_func.insert(new_rowid_val, column_values)
-
-            if pRowid != NULL and result is not None:
+            result = table_func.insert(py_values[1], py_values[2:])
+            if result is not None:
                 pRowid[0] = <sqlite3_int64>result
         else:
-            old_rowid = py_values[0]
-            new_rowid_val = py_values[1] if len(py_values) > 1 else old_rowid
-            column_values = py_values[2:] if len(py_values) > 2 else []
-
-            result = table_func.update(old_rowid, new_rowid_val, column_values)
+            table_func.update(py_values[0], py_values[1], py_values[2:])
     except NotImplementedError:
         set_vtab_error(pBase, b'Operation not implemented')
         return SQLITE_READONLY
     except Exception as exc:
-        _vtab_capture_exc(pBase, conn, table_func_cls, exc, b'update failed: ')
+        _vtab_capture_exc(pVtab, exc, b'update failed: ')
         return SQLITE_ERROR
 
     return SQLITE_OK
