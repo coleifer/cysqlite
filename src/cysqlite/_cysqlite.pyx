@@ -71,6 +71,28 @@ from cysqlite.metadata import (
 
 include "./sqlite3.pxi"
 
+__all__ = [
+    'Blob',
+    'Connection',
+    'Cursor',
+    'Row',
+    'TableFunction',
+    'compile_option',
+    'complete_statement',
+    'connect',
+    'damerau_levenshtein_dist',
+    'dict_factory',
+    'levenshtein_dist',
+    'median',
+    'rank_bm25',
+    'rank_lucene',
+    'sqlite_version',
+    'sqlite_version_info',
+    'status',
+    'threadsafety',
+    'vfs_list',
+]
+
 
 cdef int _determine_threadsafety():
     cdef int mode = sqlite3_threadsafe()

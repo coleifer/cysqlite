@@ -1,24 +1,4 @@
-from cysqlite._cysqlite import (
-    Blob,
-    Connection,
-    Cursor,
-    Row,
-    TableFunction,
-    compile_option,
-    complete_statement,
-    connect,
-    damerau_levenshtein_dist,
-    dict_factory,
-    levenshtein_dist,
-    median,
-    rank_bm25,
-    rank_lucene,
-    sqlite_version,
-    sqlite_version_info,
-    status,
-    threadsafety,
-    vfs_list,
-)
+from cysqlite._cysqlite import *
 from cysqlite._constants import *
 from cysqlite.exceptions import *
 
