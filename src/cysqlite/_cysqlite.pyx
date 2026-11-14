@@ -1374,11 +1374,10 @@ cdef class Connection(_callable_context_manager):
         return Atomic(self, lock)
 
     def backup(self, Connection dest, pages=None, name=None, progress=None,
-               src_name=None, dest_name=None):
-        # src_name is a deprecated alias for name (the source database).
+               dest_name=None):
         check_connection(self)
         cdef:
-            bytes bsrcname = encode(name or src_name or 'main')
+            bytes bsrcname = encode(name or 'main')
             bytes bdestname = encode(dest_name or 'main')
             int page_step = pages or -1
             int busy_ms = 0
@@ -1424,10 +1423,10 @@ cdef class Connection(_callable_context_manager):
             raise_sqlite_error(dest, 'error backing up database: ')
 
     def backup_to_file(self, filename, pages=None, name=None, progress=None,
-                       src_name=None, dest_name=None):
+                       dest_name=None):
         cdef Connection dest = Connection(filename)
         try:
-            self.backup(dest, pages, name, progress, src_name, dest_name)
+            self.backup(dest, pages, name, progress, dest_name)
         finally:
             dest.close()
 

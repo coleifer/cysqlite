@@ -3172,12 +3172,6 @@ class TestBackup(BaseTestCase):
             self.assertEqual(dest.execute('select count(*) from a').scalar(),
                              2)
 
-        # src_name is accepted as a deprecated alias for name.
-        with Connection(':memory:') as dest:
-            self.db.backup(dest, src_name='aux1')
-            self.assertEqual(dest.execute('select count(*) from a').scalar(),
-                             2)
-
         # Backup main into an attached database on the destination.
         with Connection(':memory:') as dest:
             dest.attach(':memory:', 'aux2')

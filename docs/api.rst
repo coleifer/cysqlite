@@ -1089,7 +1089,7 @@ Connection
          #    primary_key=False,
          #    auto_increment=False)
 
-   .. method:: backup(dest, pages=None, name=None, progress=None, src_name=None, dest_name=None)
+   .. method:: backup(dest, pages=None, name=None, progress=None, dest_name=None)
 
       Perform an online backup to the given destination :class:`Connection`.
 
@@ -1101,7 +1101,6 @@ Connection
       :param progress: Progress callback, called with three parameters: the
           number of pages remaining, the total page count, and whether the
           backup is complete.
-      :param str src_name: deprecated alias for ``name``.
       :param str dest_name: Name of database to write to on the destination
           connection. Defaults to "main".
 
@@ -1128,7 +1127,7 @@ Connection
          # Backup the contents of master to replica.
          master.backup(replica, pages=10, progress=progress)
 
-   .. method:: backup_to_file(filename, pages=None, name=None, progress=None, src_name=None, dest_name=None)
+   .. method:: backup_to_file(filename, pages=None, name=None, progress=None, dest_name=None)
 
       Perform an online backup to the given destination file.
 
@@ -1140,7 +1139,6 @@ Connection
       :param progress: Progress callback, called with three parameters: the
           number of pages remaining, the total page count, and whether the
           backup is complete.
-      :param str src_name: deprecated alias for ``name``.
       :param str dest_name: Name of database to write to in the destination
           file. Defaults to "main".
 

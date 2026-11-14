@@ -415,7 +415,6 @@ class Connection:
         pages: int | None = ...,
         name: str | None = ...,
         progress: _BackupProgress | None = ...,
-        src_name: str | None = ...,
         dest_name: str | None = ...,
     ) -> None: ...
     def backup_to_file(
@@ -424,7 +423,6 @@ class Connection:
         pages: int | None = ...,
         name: str | None = ...,
         progress: _BackupProgress | None = ...,
-        src_name: str | None = ...,
         dest_name: str | None = ...,
     ) -> None: ...
     def serialize(self, name: str = ...) -> bytes: ...
