@@ -591,10 +591,7 @@ cdef class Cursor(object):
         self.row_factory = conn.row_factory
 
     def __dealloc__(self):
-        if self.stmt is not None and self.stmt.st != NULL:
-            self.stmt.reset()
-            self.conn.stmt_release(self.stmt)
-            self.stmt = None
+        self.finish()
 
     def __enter__(self):
         return self
@@ -606,15 +603,7 @@ cdef class Cursor(object):
         if self.stmt is None or self.stmt.st == NULL:
             return
 
-        cdef:
-            list columns = self.stmt.columns()
-            list description = []
-            str name
-
-        for name in columns:
-            description.append((name,))
-
-        self.description = tuple(description)
+        self.description = tuple([(name,) for name in self.stmt.columns()])
 
     cdef int _start_execute(self) except -1:
         if self.conn.db == NULL:
@@ -624,22 +613,20 @@ cdef class Cursor(object):
 
         if self.executing:
             self.finish()
+
+        self.description = None
+        self.row_converters = None
         return 0
 
     cpdef execute(self, sql, params=None):
         self._start_execute()
 
-        self.description = None
-        self.row_converters = None
         self.rowcount = -1
         self.lastrowid = None
 
         self.stmt = self.conn.stmt_get(sql)
         try:
-            if params is not None:
-                self.stmt.bind(params)
-            else:
-                self.stmt.bind(())
+            self.stmt.bind(() if params is None else params)
         except Exception:
             self.finish()
             raise
@@ -676,8 +663,6 @@ cdef class Cursor(object):
     cpdef executemany(self, sql, seq_of_params=None):
         self._start_execute()
 
-        self.description = None
-        self.row_converters = None
         self.rowcount = 0
         self.lastrowid = None
         self.step_status = SQLITE_DONE

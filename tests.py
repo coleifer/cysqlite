@@ -880,6 +880,13 @@ class TestExecute(BaseTestCase):
         # Ensure cursor is usable.
         self.assertEqual(cursor.execute('select 1').scalar(), 1)
 
+    def test_executescript_resets_description(self):
+        curs = self.db.cursor()
+        curs.execute('select 1 as x').fetchall()
+        self.assertEqual(curs.description, (('x',),))
+        curs.executescript('select 2;')
+        self.assertIsNone(curs.description)
+
     def test_execute_script_edge_cases(self):
         curs = self.db.cursor()
         curs.executescript('')
