@@ -130,11 +130,6 @@ cdef raise_sqlite_error(Connection conn, unicode msg):
         sqlite3 *db = conn.db if conn is not None else NULL
         object cause = None
 
-    # If a callback stashed an exception on the connection during this
-    # statement, consume it now and chain it as __cause__ on the raised
-    # exception. This gives callers the original Python failure site in
-    # the traceback while keeping the DB-API-typed exception on the
-    # outside for `except OperationalError:` / `except IntegrityError:`.
     if conn is not None and conn._callback_error is not None:
         cause = conn._callback_error
         conn._callback_error = None
@@ -494,7 +489,6 @@ cdef class Statement(object):
         return rc
 
     cdef int reset(self):
-        # Cheap calls, not worth a GIL round-trip.
         cdef int rc = sqlite3_reset(self.st)
         sqlite3_clear_bindings(self.st)
         return rc
@@ -669,7 +663,7 @@ cdef class Cursor(object):
                     self.conn.converters)
         elif self.step_status == SQLITE_DONE:
             # DML with a RETURNING clause has columns even when it produced
-            # no rows -- expose the description either way.
+            # no rows.
             if not self.stmt.is_dml or sqlite3_column_count(self.stmt.st) > 0:
                 self.set_description()
         else:
@@ -1152,7 +1146,6 @@ cdef class Connection(_callable_context_manager):
     def cursor(self):
         return Cursor(self)
 
-    # The Cursor methods below check the connection is open, no need to here.
     def execute(self, sql, params=None, row_factory=SENTINEL):
         cdef Cursor cursor = Cursor(self)
         if row_factory is not SENTINEL:
@@ -1276,12 +1269,10 @@ cdef class Connection(_callable_context_manager):
 
         curs = self.execute(sql)
         if permanent:
-            # Stored only once it has succeeded, connect() replays it.
             self.pragmas[key] = value
         if multi:
             # Return multiple rows, e.g. PRAGMA table_list.
             return curs
-        # Return a single value, if one was returned.
         return curs.scalar()
 
     def get_tables(self, database=None):
@@ -1565,10 +1556,9 @@ cdef class Connection(_callable_context_manager):
 
     cdef _register(self, kind, fn, name, nargs, deterministic):
         # Register a user-defined scalar/aggregate/window/collation or a table
-        # function; a fn of None removes the matching registration (not table
+        # function, and None removes the matching registration (except table
         # functions, which are never removed). The wrapper is owned by
-        # self.callbacks and only borrowed by SQLite -- the ownership model
-        # and the rules for dropping references are documented on _Callback.
+        # self.callbacks and only borrowed by SQLite.
         check_connection(self)
         cdef:
             _Callback callback
@@ -1709,15 +1699,12 @@ cdef class Connection(_callable_context_manager):
         return decorator
 
     cdef _register_table_function(self, table_function):
-        # Resolved on every call, so a replay on reconnect uses the class's
-        # current name. Typed, so anything but a str is rejected before
-        # SQLite is given the wrapper.
         cdef unicode name = table_function.name or table_function.__name__
         self._register('tablefunc', table_function, name, 0, False)
 
     cdef _Callback _hook(self, fn, settings=None):
-        # Callers register the wrapper with SQLite before storing it, since
-        # storing it frees the one SQLite was using.
+        # Register with SQLite before setting attr to avoid freeing a previous
+        # one SQLite was using.
         check_connection(self)
         return None if fn is None else _Callback(self, fn, settings)
 
@@ -1930,23 +1917,17 @@ cdef class Connection(_callable_context_manager):
 
 
 cdef class _Callback(object):
-    # Wrapper handed to SQLite (as the user-data / context pointer) for every
-    # registered hook, UDF and collation; it references the Connection so
-    # callbacks can stash errors on it (_callback_error).
+    # Wrapper handed to SQLite (as the user-data / context pointer) for hooks.
     #
-    # Ownership model: the Connection owns every wrapper it hands to SQLite
-    # -- hooks via the _commit_hook/_trace_hook/... attributes, UDFs and
-    # collations via the `callbacks` dict (table functions follow the same
-    # model). SQLite only *borrows* the pointer: nothing is INCREF'd on
-    # its behalf and no xDestroy destructor is registered. If SQLite owned
-    # the only reference, the conn <-> wrapper cycle would be invisible to
-    # the cyclic GC and an unclosed Connection could never be collected.
+    # Ownership model: the Connection owns every wrapper it hands to SQLite and
+    # SQLite only *borrows* the pointer: nothing is INCREF'd on its behalf and
+    # no xDestroy destructor is registered. If SQLite owned the only reference,
+    # the conn <-> wrapper cycle would be invisible to the cyclic GC and an
+    # unclosed Connection could never be collected.
     #
-    # Invariant: a wrapper reference may only be dropped (attribute cleared,
-    # dict entry popped or overwritten) once SQLite can no longer use the
-    # pointer: after a *successful* re-registration or removal (SQLite
-    # refuses both with SQLITE_BUSY while the object is in active use), or
-    # after sqlite3_close_v2() has succeeded.
+    # _Callback references may only be dropped (attribute cleared, dict entry
+    # popped or overwritten) once SQLite can no longer use the pointer: after a
+    # successful re-registration, removal, or sqlite3_close_v2().
     cdef:
         Connection conn
         object fn
@@ -1971,9 +1952,6 @@ cdef void _function_cb(sqlite3_context *ctx, int argc, sqlite3_value **argv) noe
         _Callback cb = <_Callback>sqlite3_user_data(ctx)
         tuple params
 
-    # Argument and result conversion happens inside the try so that
-    # conversion errors are reported via sqlite3_result_error rather than
-    # escaping this noexcept callback (which would leave the result NULL).
     try:
         params = sqlite_to_python(argc, argv)
         result = cb.fn(*params)
@@ -2408,8 +2386,6 @@ cdef class Atomic(_callable_context_manager):
         self.txns = []
 
     def __enter__(self):
-        # Use a savepoint when any transaction is already open -- including
-        # one started manually via begin() -- otherwise BEGIN would fail.
         if self.conn._transaction_depth == 0 and not self.conn.in_transaction:
             txn = self.conn.transaction(self.lock)
         else:
@@ -2799,22 +2775,16 @@ cdef class Blob(object):
 # Support RawIOBase.
 _io.RawIOBase.register(Blob)
 
-# The cysqlite_vtab struct embeds the base sqlite3_vtab struct, and adds a
-# field to store a reference to the Python implementation and a borrowed ptr to
-# the parent Connection. The vtab holds its own reference on the
-# TableFunction subclass (INCREF in cyConnect, DECREF in cyDisconnect); the
-# conn ptr is only dereferenced from callbacks that run during statement
-# execution, which requires a live Connection.
+# cysqlite_vtab struct embeds the base sqlite3_vtab struct, and adds a field to
+# store a reference to the Python implementation and a borrowed ptr to the
+# parent Connection. The vtab holds its own reference on the TableFunction
+# subclass (INCREF in cyConnect, DECREF in cyDisconnect).
 ctypedef struct cysqlite_vtab:
     sqlite3_vtab base
     void *table_func_cls
     void *conn
 
 
-# Like cysqlite_vtab, the cysqlite_cursor embeds the base sqlite3_vtab_cursor
-# and adds fields to store references to the current index and rowid, the
-# Python implementation, the current rows' data, and a flag for whether the
-# cursor has been exhausted.
 ctypedef struct cysqlite_cursor:
     sqlite3_vtab_cursor base
     long long idx
@@ -3186,8 +3156,7 @@ cdef int cyBestIndex(sqlite3_vtab *pBase, sqlite3_index_info *pIdxInfo) \
     else:
         # Penalize the plan for each missing parameter. The cost must
         # stay huge (so better-constrained plans always win) but also
-        # distinguishable per missing param -- subtracting from DBL_MAX
-        # does not work, as DBL_MAX - k == DBL_MAX for small k.
+        # distinguishable per missing param.
         pIdxInfo.estimatedCost = 1e99 * <double>(nParams - nArg)
         pIdxInfo.estimatedRows = 10 * (nParams - nArg)
 
@@ -3241,15 +3210,9 @@ cdef int cyUpdate(sqlite3_vtab *pBase, int argc, sqlite3_value **argv,
     return SQLITE_OK
 
 
-# All table functions share one static module definition: the function
-# pointers are identical for every registration, and per-function state (the
-# TableFunction subclass and owning connection) travels through the pAux
-# pointer given to sqlite3_create_module_v2(). A C global also guarantees the
-# struct outlives every registration that refers to it -- SQLite dereferences
-# it as late as connection teardown (clearing eponymous vtabs). Members not
-# assigned below (xCreate, xBegin, xRename, ...) stay NULL from static
-# initialization; xCreate in particular must remain NULL so the function can
-# be invoked eponymously.
+# All table functions share one static module definition. Per-function state
+# (the TableFunction subclass and owning connection) goes through the pAux
+# pointer given to sqlite3_create_module_v2().
 cdef sqlite3_module _tablefunc_module
 _tablefunc_module.iVersion = 0
 _tablefunc_module.xConnect = cyConnect
